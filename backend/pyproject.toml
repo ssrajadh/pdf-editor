@@ -1,0 +1,23 @@
+[project]
+name = "pdf-editor"
+version = "0.1.0"
+description = "AI-powered PDF editor backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+    "python-multipart",
+    "pdfplumber",
+    "pikepdf",
+    "Pillow",
+    "reportlab",
+    "pytesseract",
+    "httpx",
+    "python-dotenv",
+    "pydantic",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"

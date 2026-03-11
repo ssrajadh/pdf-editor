@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+websockets
+python-multipart
+pdfplumber
+pikepdf
+Pillow
+reportlab
+pytesseract
+httpx
+python-dotenv
+pydantic
+pydantic-settings
