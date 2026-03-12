@@ -168,6 +168,29 @@ class OperationResult(BaseModel):
     error: str | None = None
 
 
+class TextReplaceResult(BaseModel):
+    """Result of a programmatic text replacement in the PDF."""
+
+    success: bool
+    original_text: str
+    new_text: str
+    escalate: bool = False
+    error_message: str | None = None
+    time_ms: int = 0
+    characters_changed: int = 0
+
+
+class StyleChangeResult(BaseModel):
+    """Result of a programmatic style change in the PDF."""
+
+    success: bool
+    target_text: str
+    changes_applied: dict
+    escalate: bool = False
+    error_message: str | None = None
+    time_ms: int = 0
+
+
 class ExecutionResult(BaseModel):
     """Full result of executing an edit plan."""
 

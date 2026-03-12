@@ -52,6 +52,18 @@ class SessionManager:
         meta_path = self.get_session_path(session_id) / "metadata.json"
         meta_path.write_text(json.dumps(metadata))
 
+    def get_working_pdf_path(self, session_id: str) -> Path:
+        """Return the working PDF path, copying from original if it doesn't exist.
+
+        The working PDF accumulates programmatic edits across the session.
+        Visual edits don't modify it — they produce images directly.
+        """
+        session_path = self.get_session_path(session_id)
+        working = session_path / "working.pdf"
+        if not working.exists():
+            shutil.copy2(session_path / "original.pdf", working)
+        return working
+
     def cleanup_session(self, session_id: str) -> None:
         """Delete all session data."""
         path = self._storage_path / session_id

@@ -314,19 +314,18 @@ class Orchestrator:
         instruction: str,
         on_progress: ProgressCallback,
     ) -> ExecutionResult:
-        """Execute a plan's operations in order."""
+        """Execute a plan's operations in order.
+
+        Programmatic ops (text_replace, style_change) are handled by PdfEditor,
+        which modifies the working PDF and manages version increments internally.
+        Visual ops receive the current version from metadata at call time.
+        """
 
         t_start = time.monotonic()
         session_path = self.sessions.get_session_path(session_id)
-        metadata = self.sessions.get_metadata(session_id)
-
-        current_version = int(
-            metadata.get("current_page_versions", {}).get(str(page_num), 0)
-        )
-        new_version = current_version + 1
         op_results: list[OperationResult] = []
 
-        # Track whether any visual op has run (determines final image source)
+        # Track whether any visual op has run (determines text layer source)
         visual_ran = False
 
         for exec_pos, op_idx in enumerate(plan.execution_order):
@@ -345,8 +344,14 @@ class Orchestrator:
                     visual_ran = True
 
             elif isinstance(op, VisualRegenerateOp):
+                # Read current version from metadata (may have been bumped
+                # by preceding programmatic ops)
+                metadata = self.sessions.get_metadata(session_id)
+                cur_v = int(
+                    metadata.get("current_page_versions", {}).get(str(page_num), 0)
+                )
                 result = await self._execute_visual(
-                    op, op_idx, session_id, page_num, new_version, on_progress,
+                    op, op_idx, session_id, page_num, cur_v + 1, on_progress,
                 )
                 visual_ran = True
 
@@ -356,13 +361,15 @@ class Orchestrator:
             result.time_ms = int((time.monotonic() - t_op) * 1000)
             op_results.append(result)
 
-        # If no visual op ran but we have programmatic-only ops (all fell back to
-        # visual above), the image was already saved. If nothing ran at all,
-        # do a fallback full-page visual edit.
-        if not op_results or (not visual_ran and not any(r.success for r in op_results)):
+        # If nothing succeeded at all, do a full-page visual fallback
+        if not op_results or not any(r.success for r in op_results):
             logger.warning("No operations succeeded, running full-page visual fallback")
             await on_progress(
                 "generating", "Falling back to full-page AI edit...", None,
+            )
+            metadata = self.sessions.get_metadata(session_id)
+            cur_v = int(
+                metadata.get("current_page_versions", {}).get(str(page_num), 0)
             )
             fallback_result = await self._execute_visual(
                 VisualRegenerateOp(
@@ -374,21 +381,22 @@ class Orchestrator:
                 op_idx=-1,
                 session_id=session_id,
                 page_num=page_num,
-                version=new_version,
+                version=cur_v + 1,
                 on_progress=on_progress,
             )
             fallback_result.time_ms = int((time.monotonic() - t_start) * 1000)
             op_results.append(fallback_result)
             visual_ran = True
 
-        # Update session metadata
-        metadata = self.sessions.get_metadata(session_id)  # re-read
-        metadata["current_page_versions"][str(page_num)] = new_version
-        self.sessions.update_metadata(session_id, metadata)
+        # Read final version from metadata (set by PdfEditor or _execute_visual)
+        metadata = self.sessions.get_metadata(session_id)
+        final_version = int(
+            metadata.get("current_page_versions", {}).get(str(page_num), 0)
+        )
 
         # Save edit record
         self._save_edit_record(
-            session_path, page_num, new_version, instruction,
+            session_path, page_num, final_version, instruction,
             text_layer_preserved=not visual_ran,
         )
 
@@ -406,7 +414,7 @@ class Orchestrator:
         return ExecutionResult(
             session_id=session_id,
             page_num=page_num,
-            version=new_version,
+            version=final_version,
             plan_summary=plan.summary,
             operations=op_results,
             total_time_ms=total_ms,
@@ -424,7 +432,10 @@ class Orchestrator:
         instruction: str,
         on_progress: ProgressCallback,
     ) -> OperationResult:
-        """Execute a programmatic op. Phase 2 Step 3: logs and falls back to visual."""
+        """Execute a programmatic op via PdfEditor. Falls back to visual on failure."""
+        from app.services.pdf_editor import PdfEditor
+
+        editor = PdfEditor(session_manager=self.sessions)
 
         if isinstance(op, TextReplaceOp):
             desc = f"'{op.original_text}' -> '{op.replacement_text}'"
@@ -433,7 +444,68 @@ class Orchestrator:
                 f"Text replacement: {desc}",
                 {"op_index": op_idx},
             )
+
+            # Skip low-confidence ops (planner already flagged as risky)
+            if op.confidence < 0.5:
+                logger.info(
+                    "Skipping low-confidence text_replace (%.2f): %s",
+                    op.confidence, desc,
+                )
+                return OperationResult(
+                    op_index=op_idx,
+                    op_type=OperationType(op.type),
+                    success=False,
+                    time_ms=0,
+                    path="programmatic",
+                    detail=f"Skipped: planner confidence {op.confidence:.2f} < 0.5",
+                    error="Low confidence — visual fallback expected",
+                )
+
+            result = await asyncio.to_thread(
+                editor.apply_text_replace,
+                session_id, page_num,
+                op.original_text, op.replacement_text, op.match_strategy,
+            )
+
+            if result.success:
+                return OperationResult(
+                    op_index=op_idx,
+                    op_type=OperationType.TEXT_REPLACE,
+                    success=True,
+                    time_ms=result.time_ms,
+                    path="programmatic",
+                    detail=f"Text replaced: {desc} ({result.characters_changed} chars changed)",
+                )
+
+            # Programmatic failed — try visual fallback
+            if result.escalate:
+                logger.warning(
+                    "Programmatic text_replace failed for op %d, falling back to visual: %s",
+                    op_idx, result.error_message,
+                )
+                await on_progress(
+                    "generating",
+                    f"Text replacement failed ({result.error_message}), "
+                    f"falling back to AI visual edit",
+                    {"op_index": op_idx},
+                )
+                return await self._visual_fallback_for_programmatic(
+                    op, op_idx, session_id, page_num, on_progress,
+                )
+
+            # Non-escalating failure (shouldn't happen, but handle it)
+            return OperationResult(
+                op_index=op_idx,
+                op_type=OperationType.TEXT_REPLACE,
+                success=False,
+                time_ms=result.time_ms,
+                path="programmatic",
+                detail=f"Text replace failed: {result.error_message}",
+                error=result.error_message,
+            )
+
         else:
+            # StyleChangeOp
             desc = f"style change on '{op.target_text}': {op.changes}"
             await on_progress(
                 "programmatic",
@@ -441,19 +513,56 @@ class Orchestrator:
                 {"op_index": op_idx},
             )
 
-        # Phase 2 Step 3: programmatic editing not yet implemented
-        logger.info(
-            "Programmatic op %d (%s) not yet implemented, falling back to visual",
-            op_idx, op.type,
-        )
+            result = await asyncio.to_thread(
+                editor.apply_style_change,
+                session_id, page_num,
+                op.target_text, op.changes,
+            )
 
-        await on_progress(
-            "generating",
-            f"Programmatic editing not yet implemented, falling back to AI visual edit",
-            {"op_index": op_idx},
-        )
+            if result.success:
+                return OperationResult(
+                    op_index=op_idx,
+                    op_type=OperationType.STYLE_CHANGE,
+                    success=True,
+                    time_ms=result.time_ms,
+                    path="programmatic",
+                    detail=f"Style changed: {result.changes_applied}",
+                )
 
-        # Build a visual prompt from the programmatic op
+            if result.escalate:
+                logger.warning(
+                    "Programmatic style_change failed for op %d, falling back to visual: %s",
+                    op_idx, result.error_message,
+                )
+                await on_progress(
+                    "generating",
+                    f"Style change failed ({result.error_message}), "
+                    f"falling back to AI visual edit",
+                    {"op_index": op_idx},
+                )
+                return await self._visual_fallback_for_programmatic(
+                    op, op_idx, session_id, page_num, on_progress,
+                )
+
+            return OperationResult(
+                op_index=op_idx,
+                op_type=OperationType.STYLE_CHANGE,
+                success=False,
+                time_ms=result.time_ms,
+                path="programmatic",
+                detail=f"Style change failed: {result.error_message}",
+                error=result.error_message,
+            )
+
+    async def _visual_fallback_for_programmatic(
+        self,
+        op: TextReplaceOp | StyleChangeOp,
+        op_idx: int,
+        session_id: str,
+        page_num: int,
+        on_progress: ProgressCallback,
+    ) -> OperationResult:
+        """Fall back to visual editing when a programmatic op fails."""
         if isinstance(op, TextReplaceOp):
             visual_prompt = (
                 f"In this PDF page, find the text '{op.original_text}' and "
@@ -468,7 +577,6 @@ class Orchestrator:
                 f"Keep everything else exactly the same."
             )
 
-        # Load current page image and run visual edit
         try:
             session_path = self.sessions.get_session_path(session_id)
             image_path = pdf_service.get_page_image_path(session_path, page_num)
@@ -477,7 +585,6 @@ class Orchestrator:
 
             result_image = await self.provider.edit_image(page_image, visual_prompt)
 
-            # Get the version we should save as
             metadata = self.sessions.get_metadata(session_id)
             current_version = int(
                 metadata.get("current_page_versions", {}).get(str(page_num), 0)
@@ -487,7 +594,6 @@ class Orchestrator:
             new_path = session_path / "pages" / f"page_{page_num}_v{new_version}.png"
             await asyncio.to_thread(result_image.save, new_path, "PNG")
 
-            # Update version immediately so next op sees the latest image
             metadata["current_page_versions"][str(page_num)] = new_version
             self.sessions.update_metadata(session_id, metadata)
 
@@ -497,8 +603,7 @@ class Orchestrator:
                 success=True,
                 time_ms=0,
                 path="fallback_visual",
-                detail=f"Programmatic {op.type} not yet implemented. "
-                f"Visual fallback succeeded: {desc}",
+                detail=f"Programmatic {op.type} failed, visual fallback succeeded",
             )
         except Exception as e:
             logger.error("Visual fallback for op %d failed: %s", op_idx, e)
@@ -508,8 +613,7 @@ class Orchestrator:
                 success=False,
                 time_ms=0,
                 path="fallback_visual",
-                detail=f"Programmatic {op.type} not yet implemented. "
-                f"Visual fallback also failed.",
+                detail=f"Programmatic {op.type} failed, visual fallback also failed",
                 error=str(e),
             )
 
