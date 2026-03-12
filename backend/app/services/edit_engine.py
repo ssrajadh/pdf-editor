@@ -13,7 +13,7 @@ from app.storage.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
-ProgressCallback = Callable[[str, str], Awaitable[None]]
+ProgressCallback = Callable[[str, str, dict | None], Awaitable[None]]
 
 
 class EditEngine:
@@ -55,16 +55,9 @@ class EditEngine:
         if page_num < 1 or page_num > page_count:
             raise ValueError(f"page_num {page_num} out of range (1-{page_count})")
 
-        # Adapt the 2-arg callback from edit.py into the 3-arg callback the
-        # orchestrator expects (stage, message, extra_data).
-        async def orchestrator_progress(
-            stage: str, message: str, extra: dict | None,
-        ) -> None:
-            await on_progress(stage, message)
-
         async with lock:
             return await self._orchestrator.execute_edit(
-                session_id, page_num, prompt, orchestrator_progress,
+                session_id, page_num, prompt, on_progress,
             )
 
     # ------------------------------------------------------------------

@@ -98,6 +98,47 @@ def extract_text(pdf_path: Path, page_num: int) -> dict:
         return {"full_text": full_text, "blocks": blocks}
 
 
+def render_page_to_image(pdf_path: Path, page_num: int, dpi: int = 200) -> "Image.Image":
+    """Render a page from any PDF to a PIL Image in memory.
+
+    Always produces a clean PDF-rendered image — never returns an AI-generated one.
+    Used as the base image for visual edits (compound degradation prevention).
+    """
+    import tempfile
+    from PIL import Image as PILImage
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        output_stem = tmp_path / "page"
+        subprocess.run(
+            [
+                "pdftoppm", "-png", "-r", str(dpi),
+                "-f", str(page_num), "-l", str(page_num),
+                "-singlefile", str(pdf_path), str(output_stem),
+            ],
+            check=True, capture_output=True,
+        )
+        img_path = Path(f"{output_stem}.png")
+        if not img_path.exists():
+            raise FileNotFoundError(f"pdftoppm failed to render page {page_num}")
+        img = PILImage.open(img_path)
+        img.load()  # load into memory before tmp dir is deleted
+        return img
+
+
+def get_current_base_image(session_path: Path, page_num: int) -> "Image.Image":
+    """Return the best base image for visual edits on a page.
+
+    - If working.pdf exists (programmatic edits applied): render from working PDF.
+    - Otherwise: render from original PDF.
+    NEVER returns a previously AI-generated image.
+    """
+    working_pdf = session_path / "working.pdf"
+    if working_pdf.exists():
+        return render_page_to_image(working_pdf, page_num)
+    return render_page_to_image(session_path / "original.pdf", page_num)
+
+
 def get_page_image_path(session_path: Path, page_num: int, version: str = "latest") -> Path:
     """Get the path to a rendered page image.
 

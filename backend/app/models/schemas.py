@@ -202,4 +202,4 @@ class ExecutionResult(BaseModel):
     total_time_ms: int
     programmatic_count: int
     visual_count: int
-    text_layer_source: Literal["original", "programmatic_edit", "ocr"]
+    text_layer_source: Literal["original", "programmatic_edit", "mixed", "ocr"]

@@ -51,21 +51,20 @@ async def edit_websocket(websocket: WebSocket, session_id: str):
         await websocket.close(code=4004)
         return
 
-    # Mutable state to capture extra data from orchestrator progress callbacks
-    _extra_data: dict = {}
-
-    async def send_progress(stage: str, message: str) -> None:
+    async def send_progress(
+        stage: str, message: str, extra: dict | None = None,
+    ) -> None:
         payload: dict = {
             "type": "progress",
             "stage": stage,
             "message": message,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        # The orchestrator adapter doesn't pass extra data through the 2-arg
-        # callback, so we use a workaround: the edit_engine wraps the 3-arg
-        # orchestrator callback into a 2-arg one. To get richer data to the
-        # WebSocket, we'd need to change the adapter. For now the stage/message
-        # carry the key info. Future: pass plan JSON and op_index.
+        if extra:
+            if "plan" in extra:
+                payload["plan"] = extra["plan"]
+            if "op_index" in extra:
+                payload["op_index"] = extra["op_index"]
         await websocket.send_json(payload)
 
     try:
