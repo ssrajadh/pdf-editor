@@ -1,30 +1,42 @@
-export interface PageInfo {
-  page_number: number;
-  width: number;
-  height: number;
+export interface Session {
+  session_id: string;
+  page_count: number;
+  filename: string;
 }
 
-export interface EditRequest {
-  session_id: string;
-  instruction: string;
-  page_number?: number;
+export interface PageInfo {
+  page_num: number;
+  version: number;
+  image_url: string;
 }
 
 export interface EditProgress {
-  session_id: string;
-  status: string;
-  progress: number;
+  stage: string;
   message: string;
+  timestamp: string;
 }
 
 export interface EditResult {
   session_id: string;
-  status: string;
-  modified_pages: number[];
+  page_num: number;
+  version: number;
+  processing_time_ms: number;
+  text_layer_preserved: boolean;
 }
 
-export interface UploadResponse {
+export interface PageTextBlock {
+  text: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  font_name: string;
+  font_size: number;
+}
+
+export interface PageTextResponse {
   session_id: string;
-  filename: string;
-  page_count: number;
+  page_number: number;
+  full_text: string;
+  blocks: PageTextBlock[];
 }
