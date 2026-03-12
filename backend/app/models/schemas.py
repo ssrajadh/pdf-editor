@@ -1,6 +1,8 @@
 from datetime import datetime
+from enum import Enum
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TextBlock(BaseModel):
@@ -79,3 +81,71 @@ class ExportResponse(BaseModel):
     session_id: str
     filename: str
     pages_modified: int
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator execution plan models
+# ---------------------------------------------------------------------------
+
+
+class OperationType(str, Enum):
+    TEXT_REPLACE = "text_replace"
+    STYLE_CHANGE = "style_change"
+    VISUAL_REGENERATE = "visual_regenerate"
+
+
+class TextReplaceOp(BaseModel):
+    """Swap specific text content in the PDF structure. Used when the replacement
+    fits in the same space or is shorter. If the replacement is significantly longer
+    and would break layout, the planner should use visual_regenerate instead."""
+
+    type: Literal["text_replace"] = "text_replace"
+    original_text: str = Field(description="Exact text to find in the PDF")
+    replacement_text: str = Field(description="What to replace it with")
+    match_strategy: Literal["exact", "contains", "first_occurrence"] = Field(
+        description="How to locate the text on the page"
+    )
+    confidence: float = Field(ge=0, le=1, description="Planner's confidence this can be done programmatically (0-1)")
+    reasoning: str = Field(description="Why this operation path was chosen")
+
+
+class StyleChangeOp(BaseModel):
+    """Modify visual properties of existing text without changing content.
+    Font, size, color, bold/italic. Only for changes that don't affect layout."""
+
+    type: Literal["style_change"] = "style_change"
+    target_text: str = Field(description="Text element to modify")
+    changes: dict = Field(description='Visual property changes, e.g. {"font_size": 24, "color": "#FF0000", "bold": true}')
+    confidence: float = Field(ge=0, le=1, description="Planner's confidence this can be done programmatically (0-1)")
+    reasoning: str = Field(description="Why this operation path was chosen")
+
+
+class VisualRegenerateOp(BaseModel):
+    """Send the page (or a region of it) to the image generation model.
+    Used for changes that can't be done programmatically: layout changes,
+    chart edits, image additions, complex visual redesigns, or text replacements
+    that would break layout."""
+
+    type: Literal["visual_regenerate"] = "visual_regenerate"
+    prompt: str = Field(description="The instruction to send to the image model")
+    region: str | None = Field(
+        default=None,
+        description='Target region: "full_page" or a description like "bottom_half", "chart_area"',
+    )
+    confidence: float = Field(ge=0, le=1, description="Planner's confidence this edit will produce the desired result (0-1)")
+    reasoning: str = Field(description="Why this operation path was chosen")
+
+
+class ExecutionPlan(BaseModel):
+    """The planner's decomposition of a user's edit instruction."""
+
+    operations: list[TextReplaceOp | StyleChangeOp | VisualRegenerateOp] = Field(
+        description="List of operations to execute"
+    )
+    execution_order: list[int] = Field(
+        description="Indices into operations list; programmatic ops first"
+    )
+    summary: str = Field(description="Human-readable description of the plan")
+    all_programmatic: bool = Field(
+        description="True if no visual_regenerate ops (fast path)"
+    )
