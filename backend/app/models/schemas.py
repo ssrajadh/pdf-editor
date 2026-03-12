@@ -149,3 +149,34 @@ class ExecutionPlan(BaseModel):
     all_programmatic: bool = Field(
         description="True if no visual_regenerate ops (fast path)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator execution result models
+# ---------------------------------------------------------------------------
+
+
+class OperationResult(BaseModel):
+    """Result of executing a single operation from the plan."""
+
+    op_index: int
+    op_type: OperationType
+    success: bool
+    time_ms: int
+    path: Literal["programmatic", "visual", "fallback_visual"]
+    detail: str
+    error: str | None = None
+
+
+class ExecutionResult(BaseModel):
+    """Full result of executing an edit plan."""
+
+    session_id: str
+    page_num: int
+    version: int
+    plan_summary: str
+    operations: list[OperationResult]
+    total_time_ms: int
+    programmatic_count: int
+    visual_count: int
+    text_layer_source: Literal["original", "programmatic_edit", "ocr"]

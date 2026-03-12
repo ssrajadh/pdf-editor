@@ -34,9 +34,13 @@ async def edit_websocket(websocket: WebSocket, session_id: str):
     """WebSocket endpoint for submitting edits and receiving progress.
 
     Client sends:  {"type": "edit", "page_num": 1, "prompt": "..."}
-    Server sends:  {"type": "progress", "stage": "...", "message": "..."}
-                   {"type": "complete", "result": {...}}
-                   {"type": "error", "message": "..."}
+    Server sends:
+      {"type": "progress", "stage": "planning", "message": "..."}
+      {"type": "progress", "stage": "planned", "message": "...", "plan": {...}}
+      {"type": "progress", "stage": "programmatic", "message": "...", "op_index": 0}
+      {"type": "progress", "stage": "generating", "message": "...", "op_index": 1}
+      {"type": "complete", "result": {...}}
+      {"type": "error", "message": "..."}
     """
     await websocket.accept()
 
@@ -46,6 +50,23 @@ async def edit_websocket(websocket: WebSocket, session_id: str):
         await websocket.send_json({"type": "error", "message": "Session not found"})
         await websocket.close(code=4004)
         return
+
+    # Mutable state to capture extra data from orchestrator progress callbacks
+    _extra_data: dict = {}
+
+    async def send_progress(stage: str, message: str) -> None:
+        payload: dict = {
+            "type": "progress",
+            "stage": stage,
+            "message": message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        # The orchestrator adapter doesn't pass extra data through the 2-arg
+        # callback, so we use a workaround: the edit_engine wraps the 3-arg
+        # orchestrator callback into a 2-arg one. To get richer data to the
+        # WebSocket, we'd need to change the adapter. For now the stage/message
+        # carry the key info. Future: pass plan JSON and op_index.
+        await websocket.send_json(payload)
 
     try:
         while True:
@@ -71,14 +92,6 @@ async def edit_websocket(websocket: WebSocket, session_id: str):
                     "message": "page_num and prompt are required",
                 })
                 continue
-
-            async def send_progress(stage: str, message: str) -> None:
-                await websocket.send_json({
-                    "type": "progress",
-                    "stage": stage,
-                    "message": message,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
 
             try:
                 result = await edit_engine.execute_edit(

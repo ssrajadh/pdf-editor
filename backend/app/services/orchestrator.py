@@ -1,0 +1,614 @@
+"""Orchestrator — assembles page context, drives the planning LLM,
+and coordinates execution of the resulting plan."""
+
+import asyncio
+import json
+import logging
+import re
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Awaitable, Callable
+
+from PIL import Image
+
+from app.models.schemas import (
+    ExecutionPlan,
+    ExecutionResult,
+    OperationResult,
+    OperationType,
+    TextBlock,
+    TextReplaceOp,
+    StyleChangeOp,
+    VisualRegenerateOp,
+)
+from app.prompts.orchestrator_plan import (
+    ORCHESTRATOR_SYSTEM_PROMPT,
+    build_orchestrator_messages,
+)
+from app.services.model_provider import ModelProvider
+from app.services import pdf_service
+from app.storage.session import SessionManager
+
+logger = logging.getLogger(__name__)
+
+ProgressCallback = Callable[[str, str, dict | None], Awaitable[None]]
+
+VISUAL_DESCRIPTION_PROMPT = """\
+Describe the non-text visual elements on this PDF page. Focus on:
+- Charts and graphs (type, approximate position, what data they show)
+- Images and photos (subject, position)
+- Logos and icons (what they are, position)
+- Decorative elements (borders, backgrounds, color blocks, dividers)
+- Layout structure (columns, sections, headers/footers)
+Do NOT describe the text content — I already have that. Be concise. Use positions like \
+'top-left', 'center', 'bottom-right', 'left column', etc."""
+
+
+# ---------------------------------------------------------------------------
+# PageContext — everything the planner needs about a page
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PageContext:
+    """All the context the planner needs about the current page."""
+
+    page_num: int
+    page_width: float
+    page_height: float
+    full_text: str
+    text_blocks: list[TextBlock] = field(default_factory=list)
+    visual_description: str = ""
+
+
+async def describe_visual_elements(
+    image: Image.Image,
+    text_content: str,
+    provider: ModelProvider,
+) -> str:
+    """Send the page image to a vision model to describe non-text visual elements."""
+    prompt = VISUAL_DESCRIPTION_PROMPT
+    if text_content:
+        prompt += (
+            "\n\nFor reference, here is the text already extracted from this page "
+            "(do NOT repeat it):\n"
+            f'"""\n{text_content[:2000]}\n"""'
+        )
+
+    description = await provider.analyze_image(image, prompt)
+    logger.info(
+        "Visual description for page (%d chars): %s",
+        len(description),
+        description[:120],
+    )
+    return description
+
+
+async def build_page_context(
+    session_id: str,
+    page_num: int,
+    provider: ModelProvider,
+    session_mgr: SessionManager,
+) -> PageContext:
+    """Assemble all context the planner needs for a page.
+
+    1. Extract text and positions from the original PDF via pdf_service
+    2. Get the current page image (original or latest edited version)
+    3. Call describe_visual_elements to get the visual description
+    4. Cache the visual_description per page version
+    """
+    session_path = session_mgr.get_session_path(session_id)
+    pdf_path = session_path / "original.pdf"
+    metadata = session_mgr.get_metadata(session_id)
+
+    # 1. Extract text
+    text_data = pdf_service.extract_text(pdf_path, page_num)
+    full_text: str = text_data["full_text"]
+    text_blocks = [TextBlock(**b) for b in text_data["blocks"]]
+
+    # Page dimensions
+    dims = pdf_service.get_page_dimensions(pdf_path)
+    page_width, page_height = dims[page_num - 1]
+
+    # 2. Current version and image
+    current_version = int(
+        metadata.get("current_page_versions", {}).get(str(page_num), 0)
+    )
+    image_path = pdf_service.get_page_image_path(session_path, page_num)
+
+    # 3. Check cache
+    cache_path = (
+        session_path / "edits" / f"page_{page_num}_v{current_version}_vis_desc.txt"
+    )
+    if cache_path.exists():
+        visual_description = cache_path.read_text()
+        logger.info("Using cached visual description for page %d v%d", page_num, current_version)
+    else:
+        image = Image.open(image_path)
+        visual_description = await describe_visual_elements(image, full_text, provider)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(visual_description)
+
+    return PageContext(
+        page_num=page_num,
+        page_width=page_width,
+        page_height=page_height,
+        full_text=full_text,
+        text_blocks=text_blocks,
+        visual_description=visual_description,
+    )
+
+
+def page_context_to_text_blocks_json(ctx: PageContext) -> str:
+    """Serialize text blocks to the JSON format the planner prompt expects."""
+    blocks = [
+        {
+            "text": b.text,
+            "x0": b.x0,
+            "y0": b.y0,
+            "x1": b.x1,
+            "y1": b.y1,
+            "font_name": b.font_name,
+            "font_size": b.font_size,
+        }
+        for b in ctx.text_blocks
+    ]
+    return json.dumps(blocks, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Plan JSON parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_plan_json(raw: str) -> ExecutionPlan:
+    """Parse raw LLM output into an ExecutionPlan, handling markdown fences."""
+    text = raw.strip()
+
+    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if fence_match:
+        text = fence_match.group(1).strip()
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError(f"No JSON object found in response: {raw[:300]}")
+
+    json_str = text[start : end + 1]
+    data = json.loads(json_str)
+    return ExecutionPlan.model_validate(data)
+
+
+def _make_fallback_plan(instruction: str) -> ExecutionPlan:
+    """Graceful degradation: a single visual_regenerate for the full page."""
+    return ExecutionPlan(
+        operations=[
+            VisualRegenerateOp(
+                prompt=instruction,
+                region="full_page",
+                confidence=0.7,
+                reasoning="Fallback: planner failed to produce a valid plan. "
+                "Routing entire instruction to visual editing.",
+            )
+        ],
+        execution_order=[0],
+        summary=f"Fallback visual edit: {instruction}",
+        all_programmatic=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator — plan + execute
+# ---------------------------------------------------------------------------
+
+
+class Orchestrator:
+    """The brain of Nano PDF Studio. Takes a user's natural language edit
+    instruction, produces a structured execution plan, and coordinates
+    execution across the programmatic and visual editing engines."""
+
+    def __init__(
+        self,
+        model_provider: ModelProvider,
+        session_manager: SessionManager,
+    ):
+        self.provider = model_provider
+        self.sessions = session_manager
+
+    # ------------------------------------------------------------------
+    # Planning
+    # ------------------------------------------------------------------
+
+    async def plan(
+        self,
+        session_id: str,
+        page_num: int,
+        instruction: str,
+        on_progress: ProgressCallback,
+    ) -> ExecutionPlan:
+        """Build page context, call the planning LLM, parse into ExecutionPlan."""
+
+        await on_progress("planning", "Analyzing edit instruction...", None)
+
+        # 1. Build page context
+        ctx = await build_page_context(
+            session_id, page_num, self.provider, self.sessions,
+        )
+
+        # 2. Format the user content (page context) separately from system prompt
+        text_blocks_json = page_context_to_text_blocks_json(ctx)
+        from app.prompts.orchestrator_plan import ORCHESTRATOR_USER_TEMPLATE
+        user_content = ORCHESTRATOR_USER_TEMPLATE.format(
+            user_instruction=instruction,
+            page_text=ctx.full_text,
+            text_blocks=text_blocks_json,
+            page_width=ctx.page_width,
+            page_height=ctx.page_height,
+            visual_description=ctx.visual_description,
+        )
+
+        # 3. Call the planning model (system + user passed separately,
+        #    plan_edit concatenates them into a single Gemini user turn)
+        raw = await self.provider.plan_edit(
+            system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+            user_message=user_content,
+        )
+        logger.info("Planner raw response (%d chars): %s", len(raw), raw[:200])
+
+        # 4. Parse
+        plan = await self._parse_with_retry(raw, instruction)
+
+        # 5. Log structured plan
+        op_types = [op.type for op in plan.operations]
+        prog_count = sum(1 for t in op_types if t != "visual_regenerate")
+        vis_count = sum(1 for t in op_types if t == "visual_regenerate")
+        logger.info(
+            "Plan: %d ops (%d programmatic, %d visual) — %s",
+            len(plan.operations), prog_count, vis_count, plan.summary,
+        )
+
+        await on_progress(
+            "planned",
+            f"Plan: {len(plan.operations)} operations — "
+            f"{prog_count} programmatic, {vis_count} visual",
+            {"plan": plan.model_dump()},
+        )
+
+        return plan
+
+    async def _parse_with_retry(
+        self, raw: str, instruction: str,
+    ) -> ExecutionPlan:
+        """Parse plan JSON with one retry on failure, then fallback."""
+        try:
+            return _parse_plan_json(raw)
+        except Exception as first_err:
+            logger.warning("Plan parse failed: %s — retrying with repair prompt", first_err)
+
+        # Retry with repair prompt
+        repair_msg = (
+            "Your previous response was not valid JSON. "
+            f"Here was the error: {first_err}\n\n"
+            "Please return ONLY valid JSON matching the ExecutionPlan schema."
+        )
+        try:
+            raw2 = await self.provider.plan_edit(
+                system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+                user_message=repair_msg,
+            )
+            return _parse_plan_json(raw2)
+        except Exception as retry_err:
+            logger.error("Plan parse retry also failed: %s — using fallback", retry_err)
+            return _make_fallback_plan(instruction)
+
+    # ------------------------------------------------------------------
+    # Execution
+    # ------------------------------------------------------------------
+
+    async def execute(
+        self,
+        session_id: str,
+        page_num: int,
+        plan: ExecutionPlan,
+        instruction: str,
+        on_progress: ProgressCallback,
+    ) -> ExecutionResult:
+        """Execute a plan's operations in order."""
+
+        t_start = time.monotonic()
+        session_path = self.sessions.get_session_path(session_id)
+        metadata = self.sessions.get_metadata(session_id)
+
+        current_version = int(
+            metadata.get("current_page_versions", {}).get(str(page_num), 0)
+        )
+        new_version = current_version + 1
+        op_results: list[OperationResult] = []
+
+        # Track whether any visual op has run (determines final image source)
+        visual_ran = False
+
+        for exec_pos, op_idx in enumerate(plan.execution_order):
+            if op_idx < 0 or op_idx >= len(plan.operations):
+                logger.warning("Skipping invalid execution_order index %d", op_idx)
+                continue
+
+            op = plan.operations[op_idx]
+            t_op = time.monotonic()
+
+            if isinstance(op, (TextReplaceOp, StyleChangeOp)):
+                result = await self._execute_programmatic(
+                    op, op_idx, session_id, page_num, instruction, on_progress,
+                )
+                if result.path == "fallback_visual":
+                    visual_ran = True
+
+            elif isinstance(op, VisualRegenerateOp):
+                result = await self._execute_visual(
+                    op, op_idx, session_id, page_num, new_version, on_progress,
+                )
+                visual_ran = True
+
+            else:
+                continue
+
+            result.time_ms = int((time.monotonic() - t_op) * 1000)
+            op_results.append(result)
+
+        # If no visual op ran but we have programmatic-only ops (all fell back to
+        # visual above), the image was already saved. If nothing ran at all,
+        # do a fallback full-page visual edit.
+        if not op_results or (not visual_ran and not any(r.success for r in op_results)):
+            logger.warning("No operations succeeded, running full-page visual fallback")
+            await on_progress(
+                "generating", "Falling back to full-page AI edit...", None,
+            )
+            fallback_result = await self._execute_visual(
+                VisualRegenerateOp(
+                    prompt=instruction,
+                    region="full_page",
+                    confidence=0.7,
+                    reasoning="Full fallback — no operations succeeded.",
+                ),
+                op_idx=-1,
+                session_id=session_id,
+                page_num=page_num,
+                version=new_version,
+                on_progress=on_progress,
+            )
+            fallback_result.time_ms = int((time.monotonic() - t_start) * 1000)
+            op_results.append(fallback_result)
+            visual_ran = True
+
+        # Update session metadata
+        metadata = self.sessions.get_metadata(session_id)  # re-read
+        metadata["current_page_versions"][str(page_num)] = new_version
+        self.sessions.update_metadata(session_id, metadata)
+
+        # Save edit record
+        self._save_edit_record(
+            session_path, page_num, new_version, instruction,
+            text_layer_preserved=not visual_ran,
+        )
+
+        total_ms = int((time.monotonic() - t_start) * 1000)
+        prog_count = sum(1 for r in op_results if r.path == "programmatic")
+        vis_count = sum(
+            1 for r in op_results if r.path in ("visual", "fallback_visual")
+        )
+
+        if visual_ran:
+            text_layer_source = "ocr"
+        else:
+            text_layer_source = "programmatic_edit"
+
+        return ExecutionResult(
+            session_id=session_id,
+            page_num=page_num,
+            version=new_version,
+            plan_summary=plan.summary,
+            operations=op_results,
+            total_time_ms=total_ms,
+            programmatic_count=prog_count,
+            visual_count=vis_count,
+            text_layer_source=text_layer_source,
+        )
+
+    async def _execute_programmatic(
+        self,
+        op: TextReplaceOp | StyleChangeOp,
+        op_idx: int,
+        session_id: str,
+        page_num: int,
+        instruction: str,
+        on_progress: ProgressCallback,
+    ) -> OperationResult:
+        """Execute a programmatic op. Phase 2 Step 3: logs and falls back to visual."""
+
+        if isinstance(op, TextReplaceOp):
+            desc = f"'{op.original_text}' -> '{op.replacement_text}'"
+            await on_progress(
+                "programmatic",
+                f"Text replacement: {desc}",
+                {"op_index": op_idx},
+            )
+        else:
+            desc = f"style change on '{op.target_text}': {op.changes}"
+            await on_progress(
+                "programmatic",
+                f"Style change: {desc}",
+                {"op_index": op_idx},
+            )
+
+        # Phase 2 Step 3: programmatic editing not yet implemented
+        logger.info(
+            "Programmatic op %d (%s) not yet implemented, falling back to visual",
+            op_idx, op.type,
+        )
+
+        await on_progress(
+            "generating",
+            f"Programmatic editing not yet implemented, falling back to AI visual edit",
+            {"op_index": op_idx},
+        )
+
+        # Build a visual prompt from the programmatic op
+        if isinstance(op, TextReplaceOp):
+            visual_prompt = (
+                f"In this PDF page, find the text '{op.original_text}' and "
+                f"change it to '{op.replacement_text}'. Keep everything else "
+                f"exactly the same."
+            )
+        else:
+            changes_desc = ", ".join(f"{k}: {v}" for k, v in op.changes.items())
+            visual_prompt = (
+                f"In this PDF page, change the style of the text "
+                f"'{op.target_text}' to have these properties: {changes_desc}. "
+                f"Keep everything else exactly the same."
+            )
+
+        # Load current page image and run visual edit
+        try:
+            session_path = self.sessions.get_session_path(session_id)
+            image_path = pdf_service.get_page_image_path(session_path, page_num)
+            page_image = await asyncio.to_thread(Image.open, image_path)
+            page_image.load()
+
+            result_image = await self.provider.edit_image(page_image, visual_prompt)
+
+            # Get the version we should save as
+            metadata = self.sessions.get_metadata(session_id)
+            current_version = int(
+                metadata.get("current_page_versions", {}).get(str(page_num), 0)
+            )
+            new_version = current_version + 1
+
+            new_path = session_path / "pages" / f"page_{page_num}_v{new_version}.png"
+            await asyncio.to_thread(result_image.save, new_path, "PNG")
+
+            # Update version immediately so next op sees the latest image
+            metadata["current_page_versions"][str(page_num)] = new_version
+            self.sessions.update_metadata(session_id, metadata)
+
+            return OperationResult(
+                op_index=op_idx,
+                op_type=OperationType(op.type),
+                success=True,
+                time_ms=0,
+                path="fallback_visual",
+                detail=f"Programmatic {op.type} not yet implemented. "
+                f"Visual fallback succeeded: {desc}",
+            )
+        except Exception as e:
+            logger.error("Visual fallback for op %d failed: %s", op_idx, e)
+            return OperationResult(
+                op_index=op_idx,
+                op_type=OperationType(op.type),
+                success=False,
+                time_ms=0,
+                path="fallback_visual",
+                detail=f"Programmatic {op.type} not yet implemented. "
+                f"Visual fallback also failed.",
+                error=str(e),
+            )
+
+    async def _execute_visual(
+        self,
+        op: VisualRegenerateOp,
+        op_idx: int,
+        session_id: str,
+        page_num: int,
+        version: int,
+        on_progress: ProgressCallback,
+    ) -> OperationResult:
+        """Execute a visual_regenerate operation."""
+
+        prompt_preview = op.prompt[:80] + ("..." if len(op.prompt) > 80 else "")
+        await on_progress(
+            "generating",
+            f"AI editing: {prompt_preview}",
+            {"op_index": op_idx},
+        )
+
+        try:
+            session_path = self.sessions.get_session_path(session_id)
+            image_path = pdf_service.get_page_image_path(session_path, page_num)
+            page_image = await asyncio.to_thread(Image.open, image_path)
+            page_image.load()
+
+            result_image = await self.provider.edit_image(page_image, op.prompt)
+
+            new_path = session_path / "pages" / f"page_{page_num}_v{version}.png"
+            await asyncio.to_thread(result_image.save, new_path, "PNG")
+            logger.info("Visual op %d saved: %s", op_idx, new_path.name)
+
+            # Update version so subsequent ops see the latest image
+            metadata = self.sessions.get_metadata(session_id)
+            metadata["current_page_versions"][str(page_num)] = version
+            self.sessions.update_metadata(session_id, metadata)
+
+            return OperationResult(
+                op_index=op_idx,
+                op_type=OperationType.VISUAL_REGENERATE,
+                success=True,
+                time_ms=0,
+                path="visual",
+                detail=f"Visual regenerate ({op.region or 'full_page'}): {op.prompt[:100]}",
+            )
+        except Exception as e:
+            logger.error("Visual op %d failed: %s", op_idx, e, exc_info=True)
+            return OperationResult(
+                op_index=op_idx,
+                op_type=OperationType.VISUAL_REGENERATE,
+                success=False,
+                time_ms=0,
+                path="visual",
+                detail=f"Visual regenerate failed",
+                error=str(e),
+            )
+
+    # ------------------------------------------------------------------
+    # Top-level entry point
+    # ------------------------------------------------------------------
+
+    async def execute_edit(
+        self,
+        session_id: str,
+        page_num: int,
+        instruction: str,
+        on_progress: ProgressCallback,
+    ) -> ExecutionResult:
+        """Plan then execute. Replaces direct edit_engine call from Phase 1."""
+        plan = await self.plan(session_id, page_num, instruction, on_progress)
+        return await self.execute(
+            session_id, page_num, plan, instruction, on_progress,
+        )
+
+    # ------------------------------------------------------------------
+    # Edit history (kept here for single-responsibility)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _save_edit_record(
+        session_path: Path,
+        page_num: int,
+        version: int,
+        prompt: str,
+        text_layer_preserved: bool,
+    ) -> None:
+        """Append an entry to the page's edit history file."""
+        history_path = session_path / "edits" / f"page_{page_num}_history.json"
+        history: list[dict] = []
+        if history_path.exists():
+            history = json.loads(history_path.read_text())
+
+        from datetime import datetime, timezone
+
+        history.append({
+            "version": version,
+            "prompt": prompt,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "text_layer_preserved": text_layer_preserved,
+        })
+        history_path.write_text(json.dumps(history))

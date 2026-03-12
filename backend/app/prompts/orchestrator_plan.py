@@ -341,6 +341,11 @@ Page text:
 {page_text}
 \"\"\"
 
+Visual elements on this page:
+\"\"\"
+{visual_description}
+\"\"\"
+
 Text blocks (JSON):
 {text_blocks}
 """
@@ -352,6 +357,7 @@ def build_orchestrator_messages(
     text_blocks_json: str,
     page_width: float,
     page_height: float,
+    visual_description: str = "No visual elements detected.",
 ) -> list[dict]:
     """Build the messages array for the Gemini text-only API call."""
     user_content = ORCHESTRATOR_USER_TEMPLATE.format(
@@ -360,6 +366,7 @@ def build_orchestrator_messages(
         text_blocks=text_blocks_json,
         page_width=page_width,
         page_height=page_height,
+        visual_description=visual_description,
     )
 
     return [

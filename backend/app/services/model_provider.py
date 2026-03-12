@@ -30,6 +30,16 @@ class ModelProvider(abc.ABC):
         """Take a page image and edit instruction, return edited image."""
         ...
 
+    @abc.abstractmethod
+    async def analyze_image(self, image: Image.Image, prompt: str) -> str:
+        """Vision-language call: image + text prompt → text response."""
+        ...
+
+    @abc.abstractmethod
+    async def plan_edit(self, system_prompt: str, user_message: str) -> str:
+        """Text-only LLM call for the orchestration planner."""
+        ...
+
 
 def _pil_to_base64(image: Image.Image, fmt: str = "PNG") -> str:
     buf = io.BytesIO()
@@ -155,6 +165,130 @@ class GeminiProvider(ModelProvider):
         raise RuntimeError(
             f"Gemini API failed after {self.MAX_RETRIES} attempts"
         ) from last_exc
+
+    async def analyze_image(self, image: Image.Image, prompt: str) -> str:
+        """Vision-language call: send image + prompt, get text back."""
+        url = f"{self.API_BASE}/{self._model}:generateContent"
+        params = {"key": self._api_key}
+
+        image_b64 = _pil_to_base64(image)
+        body = {
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {"inline_data": {"mime_type": "image/png", "data": image_b64}},
+                    {"text": prompt},
+                ],
+            }],
+            "generationConfig": {
+                "responseModalities": ["TEXT"],
+            },
+        }
+
+        last_exc: Exception | None = None
+        for attempt in range(self.MAX_RETRIES):
+            t0 = time.monotonic()
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.post(url, params=params, json=body)
+
+                elapsed = time.monotonic() - t0
+                logger.info("Gemini analyze_image took %.2fs (attempt %d)", elapsed, attempt + 1)
+
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    backoff = self.INITIAL_BACKOFF * (2 ** attempt)
+                    logger.warning("Gemini API %d, retrying in %.1fs", resp.status_code, backoff)
+                    last_exc = RuntimeError(f"Gemini API error {resp.status_code}")
+                    await asyncio.sleep(backoff)
+                    continue
+
+                if resp.status_code != 200:
+                    raise RuntimeError(f"Gemini API error {resp.status_code}: {resp.text[:500]}")
+
+                return self._extract_text(resp.json())
+
+            except httpx.TimeoutException as e:
+                logger.warning("Gemini analyze_image timeout (attempt %d)", attempt + 1)
+                last_exc = e
+                continue
+            except RuntimeError:
+                raise
+            except Exception as e:
+                last_exc = e
+                logger.error("Gemini analyze_image error: %s", e)
+                continue
+
+        raise RuntimeError(f"Gemini analyze_image failed after {self.MAX_RETRIES} attempts") from last_exc
+
+    async def plan_edit(self, system_prompt: str, user_message: str) -> str:
+        """Text-only planning call using the fast planning model."""
+        from app.config import settings
+
+        model = settings.planning_model
+        temperature = settings.planning_model_temperature
+
+        url = f"{self.API_BASE}/{model}:generateContent"
+        params = {"key": self._api_key}
+
+        body = {
+            "contents": [
+                {"role": "user", "parts": [{"text": system_prompt + "\n\n" + user_message}]},
+            ],
+            "generationConfig": {
+                "temperature": temperature,
+                "responseMimeType": "application/json",
+            },
+        }
+
+        last_exc: Exception | None = None
+        for attempt in range(self.MAX_RETRIES):
+            t0 = time.monotonic()
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.post(url, params=params, json=body)
+
+                elapsed = time.monotonic() - t0
+                logger.info("Gemini plan_edit (%s) took %.2fs (attempt %d)", model, elapsed, attempt + 1)
+
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    backoff = self.INITIAL_BACKOFF * (2 ** attempt)
+                    logger.warning("Gemini API %d, retrying in %.1fs", resp.status_code, backoff)
+                    last_exc = RuntimeError(f"Gemini API error {resp.status_code}")
+                    await asyncio.sleep(backoff)
+                    continue
+
+                if resp.status_code != 200:
+                    raise RuntimeError(f"Gemini API error {resp.status_code}: {resp.text[:500]}")
+
+                return self._extract_text(resp.json())
+
+            except httpx.TimeoutException as e:
+                logger.warning("Gemini plan_edit timeout (attempt %d)", attempt + 1)
+                last_exc = e
+                continue
+            except RuntimeError:
+                raise
+            except Exception as e:
+                last_exc = e
+                logger.error("Gemini plan_edit error: %s", e)
+                continue
+
+        raise RuntimeError(f"Gemini plan_edit failed after {self.MAX_RETRIES} attempts") from last_exc
+
+    def _extract_text(self, response_data: dict) -> str:
+        """Extract text from a Gemini response."""
+        candidates = response_data.get("candidates", [])
+        if not candidates:
+            block_reason = response_data.get("promptFeedback", {}).get("blockReason")
+            if block_reason:
+                raise RuntimeError(f"Content blocked by Gemini: {block_reason}")
+            raise RuntimeError("Gemini returned no candidates")
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text_parts = [p["text"] for p in parts if "text" in p]
+        if not text_parts:
+            raise RuntimeError("Gemini response contained no text")
+        return "\n".join(text_parts)
 
     def _extract_image(self, response_data: dict) -> Image.Image:
         """Extract the generated image from the Gemini response."""

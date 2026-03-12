@@ -1,18 +1,14 @@
-"""Edit orchestration engine — Phase 1 full-page visual regeneration."""
+"""Edit engine — delegates to the Orchestrator for planning + execution."""
 
 import asyncio
 import json
 import logging
-import time
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Awaitable
+from typing import Awaitable, Callable
 
-from PIL import Image
-
-from app.models.schemas import EditResult, EditVersion
+from app.models.schemas import EditResult, EditVersion, ExecutionResult
 from app.services.model_provider import ModelProvider
-from app.services import pdf_service
+from app.services.orchestrator import Orchestrator
 from app.storage.session import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -21,7 +17,7 @@ ProgressCallback = Callable[[str, str], Awaitable[None]]
 
 
 class EditEngine:
-    """Orchestrates the edit pipeline: load → extract → generate → save."""
+    """Entry point for edits. Wraps the Orchestrator and manages concurrency."""
 
     def __init__(
         self,
@@ -30,6 +26,10 @@ class EditEngine:
     ):
         self._sessions = session_manager
         self._provider = model_provider
+        self._orchestrator = Orchestrator(
+            model_provider=model_provider,
+            session_manager=session_manager,
+        )
         self._locks: dict[str, asyncio.Lock] = {}
 
     def _session_lock(self, session_id: str) -> asyncio.Lock:
@@ -43,163 +43,33 @@ class EditEngine:
         page_num: int,
         prompt: str,
         on_progress: ProgressCallback,
-    ) -> EditResult:
+    ) -> ExecutionResult:
+        """Execute an edit via the orchestrator. Returns rich ExecutionResult."""
         lock = self._session_lock(session_id)
         if lock.locked():
             raise RuntimeError("An edit is already in progress for this session")
 
-        async with lock:
-            return await self._run_pipeline(session_id, page_num, prompt, on_progress)
-
-    async def _run_pipeline(
-        self,
-        session_id: str,
-        page_num: int,
-        prompt: str,
-        on_progress: ProgressCallback,
-    ) -> EditResult:
-        t_start = time.monotonic()
-
-        session_path = self._sessions.get_session_path(session_id)
+        # Validate page num
         metadata = self._sessions.get_metadata(session_id)
         page_count = metadata["page_count"]
         if page_num < 1 or page_num > page_count:
             raise ValueError(f"page_num {page_num} out of range (1-{page_count})")
 
-        # --- Step 1: Load current page image ---
-        await on_progress("loading", "Loading page...")
-        page_image_path = pdf_service.get_page_image_path(session_path, page_num)
-        page_image = await asyncio.to_thread(Image.open, page_image_path)
-        page_image.load()
-        logger.info("Loaded page %d image: %s (%s)", page_num, page_image_path.name, page_image.size)
+        # Adapt the 2-arg callback from edit.py into the 3-arg callback the
+        # orchestrator expects (stage, message, extra_data).
+        async def orchestrator_progress(
+            stage: str, message: str, extra: dict | None,
+        ) -> None:
+            await on_progress(stage, message)
 
-        # --- Step 2: Extract text layer from original PDF ---
-        await on_progress("extracting", "Extracting text layer...")
-        text_layer = await self._ensure_original_text_layer(session_path, page_num)
-
-        # --- Step 3: Send to AI model ---
-        await on_progress("generating", "Sending to AI model...")
-        result_image = await self._provider.edit_image(page_image, prompt)
-        logger.info("AI returned image: %s", result_image.size)
-
-        # --- Step 4: Save new version ---
-        await on_progress("processing", "Processing result...")
-        versions = metadata["current_page_versions"]
-        current_version = int(versions.get(str(page_num), 0))
-        new_version = current_version + 1
-
-        new_image_path = session_path / "pages" / f"page_{page_num}_v{new_version}.png"
-        await asyncio.to_thread(result_image.save, new_image_path, "PNG")
-        logger.info("Saved new version: %s", new_image_path.name)
-
-        # --- Step 5: Text layer strategy ---
-        await on_progress("text_layer", "Preserving text layer...")
-        text_layer_preserved = await self._handle_text_layer(
-            session_path, page_num, new_version, text_layer, prompt,
-        )
-
-        # --- Step 6: Update metadata and finish ---
-        await on_progress("complete", "Edit complete")
-
-        versions[str(page_num)] = new_version
-        metadata["current_page_versions"] = versions
-        self._sessions.update_metadata(session_id, metadata)
-
-        self._save_edit_record(
-            session_path, page_num, new_version, prompt, text_layer_preserved,
-        )
-
-        elapsed_ms = (time.monotonic() - t_start) * 1000
-        logger.info("Edit pipeline completed in %.0fms", elapsed_ms)
-
-        return EditResult(
-            session_id=session_id,
-            page_num=page_num,
-            version=new_version,
-            processing_time_ms=round(elapsed_ms, 1),
-            text_layer_preserved=text_layer_preserved,
-        )
+        async with lock:
+            return await self._orchestrator.execute_edit(
+                session_id, page_num, prompt, orchestrator_progress,
+            )
 
     # ------------------------------------------------------------------
-    # Text layer helpers
+    # Edit history (unchanged from Phase 1)
     # ------------------------------------------------------------------
-
-    async def _ensure_original_text_layer(
-        self, session_path: Path, page_num: int,
-    ) -> dict:
-        """Extract and cache the original PDF text layer for a page."""
-        cache_path = session_path / "edits" / f"page_{page_num}_text_layer.json"
-        if cache_path.exists():
-            return json.loads(cache_path.read_text())
-
-        pdf_path = session_path / "original.pdf"
-        text_data = await asyncio.to_thread(pdf_service.extract_text, pdf_path, page_num)
-        cache_path.write_text(json.dumps(text_data))
-        return text_data
-
-    async def _handle_text_layer(
-        self,
-        session_path: Path,
-        page_num: int,
-        version: int,
-        original_text_layer: dict,
-        prompt: str,
-    ) -> bool:
-        """Determine whether the original text layer can be preserved.
-
-        Phase 1: use keyword heuristics to guess whether the edit changes text.
-        If not, preserve the original text layer. If yes, mark it as stale
-        (the future orchestrator will handle text edits programmatically).
-
-        Returns True if the original text layer was preserved.
-        """
-        changes_text = self._prompt_changes_text(prompt)
-
-        layer_path = session_path / "edits" / f"page_{page_num}_v{version}_text.json"
-
-        if not changes_text:
-            layer_path.write_text(json.dumps(original_text_layer))
-            return True
-
-        layer_path.write_text(json.dumps({"full_text": "", "blocks": [], "stale": True}))
-        return False
-
-    @staticmethod
-    def _prompt_changes_text(prompt: str) -> bool:
-        """Heuristic: does the edit prompt imply text content changes?"""
-        text_keywords = [
-            "text", "title", "heading", "word", "sentence", "paragraph",
-            "label", "caption", "rename", "rewrite", "rephrase",
-            "replace", "say", "spell", "write", "font", "typing",
-        ]
-        lower = prompt.lower()
-        return any(kw in lower for kw in text_keywords)
-
-    # ------------------------------------------------------------------
-    # Edit history
-    # ------------------------------------------------------------------
-
-    def _save_edit_record(
-        self,
-        session_path: Path,
-        page_num: int,
-        version: int,
-        prompt: str,
-        text_layer_preserved: bool,
-    ) -> None:
-        """Append an entry to the page's edit history file."""
-        history_path = session_path / "edits" / f"page_{page_num}_history.json"
-        history: list[dict] = []
-        if history_path.exists():
-            history = json.loads(history_path.read_text())
-
-        history.append({
-            "version": version,
-            "prompt": prompt,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "text_layer_preserved": text_layer_preserved,
-        })
-        history_path.write_text(json.dumps(history))
 
     async def get_edit_history(
         self, session_id: str, page_num: int,
