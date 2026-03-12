@@ -24,6 +24,15 @@ export interface EditResult {
   text_layer_preserved: boolean;
 }
 
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant" | "progress";
+  content: string;
+  timestamp: string;
+  result?: EditResult;
+  stage?: string;
+}
+
 export interface PageTextBlock {
   text: string;
   x0: number;

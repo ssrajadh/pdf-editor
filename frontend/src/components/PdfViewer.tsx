@@ -1,35 +1,81 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
-import type { Session } from "../types";
-import { getPageImageUrl } from "../services/api";
+import type { Session, EditProgress } from "../types";
+import BeforeAfterToggle from "./BeforeAfterToggle";
 
 interface Props {
   session: Session;
   currentPage: number;
+  imageUrl: string;
+  originalImageUrl: string;
   pageVersion?: number;
+  isEditing: boolean;
+  editProgress: EditProgress | null;
 }
 
-export default function PdfViewer({ session, currentPage, pageVersion }: Props) {
+export default function PdfViewer({
+  session,
+  currentPage,
+  imageUrl,
+  originalImageUrl,
+  pageVersion,
+  isEditing,
+  editProgress,
+}: Props) {
   const [loading, setLoading] = useState(true);
+  const [showOriginal, setShowOriginal] = useState(false);
 
-  const imageUrl = getPageImageUrl(session.session_id, currentPage, pageVersion);
+  const hasEdits = pageVersion !== undefined && pageVersion > 0;
+  const displayUrl = hasEdits && showOriginal ? originalImageUrl : imageUrl;
+
+  useEffect(() => {
+    setLoading(true);
+    setShowOriginal(false);
+  }, [currentPage]);
+
+  useEffect(() => {
+    setLoading(true);
+  }, [displayUrl]);
 
   return (
-    <div className="flex-1 flex flex-col items-center bg-gray-100 overflow-auto p-6">
-      <div className="mb-3 text-sm text-gray-500 font-medium">
-        Page {currentPage} of {session.page_count}
+    <div className="flex-1 flex flex-col items-center bg-gray-100 overflow-auto h-full">
+      {/* Top bar */}
+      <div className="flex items-center gap-4 py-3 px-4 w-full max-w-3xl">
+        <span className="text-sm text-gray-500 font-medium">
+          Page {currentPage} of {session.page_count}
+        </span>
+
+        {hasEdits && (
+          <BeforeAfterToggle
+            showOriginal={showOriginal}
+            onToggle={setShowOriginal}
+          />
+        )}
       </div>
 
-      <div className="relative w-full max-w-3xl">
+      {/* Image */}
+      <div className="relative w-full max-w-3xl px-4 pb-6">
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-lg z-10">
+          <div className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-lg z-10 mx-4">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
           </div>
         )}
 
+        {isEditing && editProgress && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 rounded-lg z-20 mx-4 backdrop-blur-[2px]">
+            <Loader2 className="w-10 h-10 text-white animate-spin mb-3" />
+            <p className="text-white text-sm font-medium">
+              {editProgress.message}
+            </p>
+            <p className="text-white/60 text-xs mt-1 capitalize">
+              {editProgress.stage}
+            </p>
+          </div>
+        )}
+
         <img
-          key={imageUrl}
-          src={imageUrl}
+          key={displayUrl}
+          src={displayUrl}
           alt={`Page ${currentPage}`}
           className="w-full h-auto rounded-lg shadow-md bg-white"
           onLoad={() => setLoading(false)}

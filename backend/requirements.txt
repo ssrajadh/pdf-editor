@@ -6,7 +6,6 @@ pdfplumber
 pikepdf
 Pillow
 reportlab
-pytesseract
 httpx
 python-dotenv
 pydantic

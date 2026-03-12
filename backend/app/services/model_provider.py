@@ -85,7 +85,11 @@ class GeminiProvider(ModelProvider):
                         "data": image_b64,
                     }
                 },
-                {"text": prompt},
+                {"text": (
+                    "Edit this image according to the following instruction. "
+                    "You MUST return the edited image. Do not respond with only text.\n\n"
+                    f"Instruction: {prompt}"
+                )},
             ],
         })
 

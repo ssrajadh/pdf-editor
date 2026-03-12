@@ -95,7 +95,7 @@ class EditEngine:
         # --- Step 5: Text layer strategy ---
         await on_progress("text_layer", "Preserving text layer...")
         text_layer_preserved = await self._handle_text_layer(
-            session_path, page_num, new_version, result_image, text_layer, prompt,
+            session_path, page_num, new_version, text_layer, prompt,
         )
 
         # --- Step 6: Update metadata and finish ---
@@ -142,24 +142,18 @@ class EditEngine:
         session_path: Path,
         page_num: int,
         version: int,
-        result_image: Image.Image,
         original_text_layer: dict,
         prompt: str,
     ) -> bool:
         """Determine whether the original text layer can be preserved.
 
-        Phase 1 simplified strategy:
-        - Ask the vision model whether the edit changes text content.
-        - If text is unchanged, keep the original text layer.
-        - If text changed, run Tesseract OCR to generate a replacement.
+        Phase 1: use keyword heuristics to guess whether the edit changes text.
+        If not, preserve the original text layer. If yes, mark it as stale
+        (the future orchestrator will handle text edits programmatically).
 
         Returns True if the original text layer was preserved.
         """
-        try:
-            changes_text = await self._check_text_changed(prompt)
-        except Exception:
-            logger.warning("Text-change check failed; falling back to OCR", exc_info=True)
-            changes_text = True
+        changes_text = self._prompt_changes_text(prompt)
 
         layer_path = session_path / "edits" / f"page_{page_num}_v{version}_text.json"
 
@@ -167,33 +161,19 @@ class EditEngine:
             layer_path.write_text(json.dumps(original_text_layer))
             return True
 
-        ocr_text = await self._ocr_image(result_image)
-        layer_path.write_text(json.dumps({"full_text": ocr_text, "blocks": []}))
+        layer_path.write_text(json.dumps({"full_text": "", "blocks": [], "stale": True}))
         return False
 
-    async def _check_text_changed(self, prompt: str) -> bool:
-        """Heuristic check: does the edit prompt imply text content changes?
-
-        Phase 1 uses keyword heuristics rather than an extra API call to keep
-        latency low.  Phase 2 can upgrade to a vision-model analysis.
-        """
+    @staticmethod
+    def _prompt_changes_text(prompt: str) -> bool:
+        """Heuristic: does the edit prompt imply text content changes?"""
         text_keywords = [
             "text", "title", "heading", "word", "sentence", "paragraph",
-            "label", "caption", "rename", "rewrite", "rephrase", "change",
+            "label", "caption", "rename", "rewrite", "rephrase",
             "replace", "say", "spell", "write", "font", "typing",
         ]
         lower = prompt.lower()
         return any(kw in lower for kw in text_keywords)
-
-    async def _ocr_image(self, image: Image.Image) -> str:
-        """Run Tesseract OCR on an image, returning extracted text."""
-        try:
-            import pytesseract
-            text: str = await asyncio.to_thread(pytesseract.image_to_string, image)
-            return text.strip()
-        except Exception:
-            logger.warning("OCR failed; returning empty text layer", exc_info=True)
-            return ""
 
     # ------------------------------------------------------------------
     # Edit history

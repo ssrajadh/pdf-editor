@@ -1,41 +1,45 @@
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { Upload, FileText, Loader2 } from "lucide-react";
-import type { Session } from "./types";
-import { uploadPdf } from "./services/api";
+import { usePdfSession } from "./hooks/usePdfSession";
+import { getPageImageUrl } from "./services/api";
 import PdfViewer from "./components/PdfViewer";
 import PageThumbnails from "./components/PageThumbnails";
+import ChatPanel from "./components/ChatPanel";
 
 function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState(false);
+  const {
+    session,
+    currentPage,
+    pageVersions,
+    currentPageVersion,
+    currentMessages,
+    editProgress,
+    isEditing,
+    uploading,
+    uploadError,
 
-  const handleUpload = useCallback(async (file: File) => {
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      setError("Please select a PDF file");
-      return;
-    }
+    uploadPdf,
+    selectPage,
+    sendEdit,
+    getImageUrl,
+    setSession,
+    setUploadError,
+  } = usePdfSession();
 
-    setUploading(true);
-    setError(null);
-
-    try {
-      const result = await uploadPdf(file);
-      setSession(result);
-      setCurrentPage(1);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setUploading(false);
-    }
-  }, []);
+  const handleUpload = useCallback(
+    async (file: File) => {
+      if (!file.name.toLowerCase().endsWith(".pdf")) {
+        setUploadError("Please select a PDF file");
+        return;
+      }
+      await uploadPdf(file);
+    },
+    [uploadPdf, setUploadError],
+  );
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
-      setDragOver(false);
       const file = e.dataTransfer.files[0];
       if (file) handleUpload(file);
     },
@@ -50,24 +54,15 @@ function App() {
     [handleUpload],
   );
 
+  // ---- Upload screen ----
   if (!session) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50">
         <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
+          onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
-          className={`
-            flex flex-col items-center gap-6 p-16 rounded-2xl border-2 border-dashed
-            transition-colors cursor-pointer
-            ${dragOver
-              ? "border-blue-500 bg-blue-50"
-              : "border-gray-300 bg-white hover:border-gray-400"
-            }
-          `}
+          className="flex flex-col items-center gap-6 p-16 rounded-2xl border-2 border-dashed
+                     border-gray-300 bg-white hover:border-gray-400 transition-colors cursor-pointer"
           onClick={() => document.getElementById("file-input")?.click()}
         >
           {uploading ? (
@@ -77,19 +72,19 @@ function App() {
           )}
 
           <div className="text-center">
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              PDF Editor
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">
+              Nano PDF Studio
             </h1>
-            <p className="text-gray-500">
+            <p className="text-gray-500 text-sm">
               {uploading
                 ? "Uploading and rendering pages..."
                 : "Drop a PDF here or click to browse"}
             </p>
           </div>
 
-          {error && (
+          {uploadError && (
             <p className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded-lg">
-              {error}
+              {uploadError}
             </p>
           )}
 
@@ -105,55 +100,70 @@ function App() {
     );
   }
 
+  // ---- Editor screen ----
+  const imageUrl = getImageUrl(currentPage);
+  const originalImageUrl = getPageImageUrl(session.session_id, currentPage, 0);
+
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-gray-100">
       {/* Header */}
       <header className="flex items-center gap-3 px-4 py-2 bg-white border-b shrink-0">
         <FileText className="w-5 h-5 text-blue-600" />
-        <span className="font-semibold text-gray-900 truncate">
+        <span className="text-sm font-bold text-blue-600 tracking-tight">
+          Nano PDF Studio
+        </span>
+        <span className="text-gray-300">|</span>
+        <span className="font-medium text-gray-900 truncate text-sm">
           {session.filename}
         </span>
-        <span className="text-sm text-gray-400">
+        <span className="text-xs text-gray-400">
           {session.page_count} {session.page_count === 1 ? "page" : "pages"}
         </span>
         <button
           onClick={() => {
             setSession(null);
-            setCurrentPage(1);
-            setError(null);
+            setUploadError(null);
           }}
-          className="ml-auto text-sm text-gray-500 hover:text-gray-700 px-3 py-1 rounded hover:bg-gray-100 transition-colors"
+          className="ml-auto text-xs text-gray-500 hover:text-gray-700 px-3 py-1 rounded
+                     hover:bg-gray-100 transition-colors"
         >
           Upload new
         </button>
       </header>
 
-      {/* Main content */}
+      {/* Main layout */}
       <div className="flex flex-1 min-h-0">
-        {/* Thumbnails sidebar — 15% */}
-        <div className="w-[15%] min-w-[140px] max-w-[200px]">
+        {/* Thumbnails */}
+        <div className="w-[15%] min-w-[140px] max-w-[200px] shrink-0">
           <PageThumbnails
             session={session}
             currentPage={currentPage}
-            onSelectPage={setCurrentPage}
+            onSelectPage={selectPage}
+            pageVersions={pageVersions}
           />
         </div>
 
-        {/* PDF Viewer — center, takes remaining space */}
+        {/* Viewer */}
         <div className="flex-1 min-w-0">
-          <PdfViewer session={session} currentPage={currentPage} />
+          <PdfViewer
+            session={session}
+            currentPage={currentPage}
+            imageUrl={imageUrl}
+            originalImageUrl={originalImageUrl}
+            pageVersion={currentPageVersion}
+            isEditing={isEditing}
+            editProgress={editProgress}
+          />
         </div>
 
-        {/* Chat panel placeholder — 35% */}
-        <div className="w-[35%] min-w-[280px] max-w-[480px] bg-gray-50 border-l flex flex-col">
-          <div className="p-4 border-b">
-            <h2 className="font-semibold text-gray-900">Edit Chat</h2>
-          </div>
-          <div className="flex-1 flex items-center justify-center p-6">
-            <p className="text-sm text-gray-400 text-center">
-              Chat panel coming next — you'll send edit instructions here
-            </p>
-          </div>
+        {/* Chat */}
+        <div className="w-[35%] min-w-[280px] max-w-[480px] bg-gray-50 border-l shrink-0">
+          <ChatPanel
+            messages={currentMessages}
+            currentPage={currentPage}
+            isEditing={isEditing}
+            onSendEdit={sendEdit}
+          />
         </div>
       </div>
     </div>

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
 
 from app.config import settings
@@ -49,15 +51,20 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 
 @router.get("/{session_id}/page/{page_num}/image")
-async def get_page_image(session_id: str, page_num: int):
+async def get_page_image(
+    session_id: str,
+    page_num: int,
+    v: Optional[int] = Query(None, description="Specific version to retrieve; omit for latest"),
+):
     """Return the rendered PNG image for a page."""
     try:
         session_path = session_mgr.get_session_path(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    version = str(v) if v is not None else "latest"
     try:
-        image_path = pdf_service.get_page_image_path(session_path, page_num)
+        image_path = pdf_service.get_page_image_path(session_path, page_num, version)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Image for page {page_num} not found")
 
