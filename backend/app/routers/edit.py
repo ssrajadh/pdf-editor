@@ -89,22 +89,25 @@ async def edit_websocket(websocket: WebSocket, session_id: str):
                     "result": result.model_dump(),
                 })
             except RuntimeError as exc:
-                if "already in progress" in str(exc):
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "An edit is already in progress for this session. Please wait.",
-                    })
+                err = str(exc)
+                if "already in progress" in err:
+                    user_msg = "An edit is already in progress for this session. Please wait."
+                elif "Content blocked" in err or "safety filters" in err:
+                    user_msg = "The AI model filtered this edit request. Try rephrasing your instruction."
+                elif "failed after" in err and "attempts" in err:
+                    user_msg = "The AI model is temporarily unavailable. Please try again in a moment."
+                elif "no image" in err.lower():
+                    user_msg = "The AI model didn't return an edited image. Try rephrasing your instruction to be more specific."
                 else:
+                    user_msg = err
                     logger.error("Edit failed: %s", exc, exc_info=True)
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": str(exc),
-                    })
+
+                await websocket.send_json({"type": "error", "message": user_msg})
             except Exception as exc:
                 logger.error("Edit failed: %s", exc, exc_info=True)
                 await websocket.send_json({
                     "type": "error",
-                    "message": f"Edit failed: {exc}",
+                    "message": "An unexpected error occurred. Please try again.",
                 })
 
     except WebSocketDisconnect:

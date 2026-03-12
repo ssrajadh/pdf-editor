@@ -1,10 +1,11 @@
-import { useCallback, useState } from "react";
-import { Upload, FileText, Loader2, Download } from "lucide-react";
+import { useCallback, useState, useEffect } from "react";
+import { Upload, FileText, Loader2, Download, WifiOff, Pencil, Clock } from "lucide-react";
 import { usePdfSession } from "./hooks/usePdfSession";
 import { getPageImageUrl, exportPdf } from "./services/api";
 import PdfViewer from "./components/PdfViewer";
 import PageThumbnails from "./components/PageThumbnails";
 import ChatPanel from "./components/ChatPanel";
+import Toast from "./components/Toast";
 
 function App() {
   const {
@@ -15,28 +16,62 @@ function App() {
     currentMessages,
     editProgress,
     isEditing,
+    isReconnecting,
     uploading,
     uploadError,
+    editCount,
+    sessionDuration,
 
     uploadPdf,
     selectPage,
     sendEdit,
+    retryLastEdit,
     getImageUrl,
     setSession,
     setUploadError,
   } = usePdfSession();
 
   const [exporting, setExporting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [, setTick] = useState(0);
+
+  // Re-render every minute to update session duration display
+  useEffect(() => {
+    if (!session) return;
+    const id = setInterval(() => setTick((t) => t + 1), 60000);
+    return () => clearInterval(id);
+  }, [session]);
 
   const hasEdits = Object.values(pageVersions).some((v) => v > 0);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    if (!session) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        selectPage(Math.max(1, currentPage - 1));
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        selectPage(Math.min(session.page_count, currentPage + 1));
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [session, currentPage, selectPage]);
 
   const handleExport = useCallback(async () => {
     if (!session || exporting) return;
     setExporting(true);
     try {
       await exportPdf(session.session_id, session.filename);
+      setToast("PDF exported successfully");
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Export failed");
+      setToast(err instanceof Error ? err.message : "Export failed");
     } finally {
       setExporting(false);
     }
@@ -73,7 +108,7 @@ function App() {
   // ---- Upload screen ----
   if (!session) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-50">
+      <div className="h-screen flex items-center justify-center bg-gray-50 min-w-[1024px]">
         <div
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
@@ -99,7 +134,7 @@ function App() {
           </div>
 
           {uploadError && (
-            <p className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded-lg">
+            <p className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded-lg animate-fade-in">
               {uploadError}
             </p>
           )}
@@ -121,7 +156,15 @@ function App() {
   const originalImageUrl = getPageImageUrl(session.session_id, currentPage, 0);
 
   return (
-    <div className="h-screen flex flex-col bg-gray-100">
+    <div className="h-screen flex flex-col bg-gray-100 min-w-[1024px]">
+      {/* Reconnecting banner */}
+      {isReconnecting && (
+        <div className="bg-amber-500 text-white text-xs text-center py-1.5 px-4 flex items-center justify-center gap-2 animate-slide-down shrink-0">
+          <WifiOff className="w-3.5 h-3.5" />
+          Connection lost. Reconnecting...
+        </div>
+      )}
+
       {/* Header */}
       <header className="flex items-center gap-3 px-4 py-2 bg-white border-b shrink-0">
         <FileText className="w-5 h-5 text-blue-600" />
@@ -132,9 +175,23 @@ function App() {
         <span className="font-medium text-gray-900 truncate text-sm">
           {session.filename}
         </span>
-        <span className="text-xs text-gray-400">
-          {session.page_count} {session.page_count === 1 ? "page" : "pages"}
-        </span>
+
+        <div className="flex items-center gap-3 text-xs text-gray-400">
+          <span>{session.page_count} {session.page_count === 1 ? "page" : "pages"}</span>
+          {editCount > 0 && (
+            <span className="flex items-center gap-1">
+              <Pencil className="w-3 h-3" />
+              {editCount} {editCount === 1 ? "edit" : "edits"}
+            </span>
+          )}
+          {sessionDuration > 0 && (
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {sessionDuration}m
+            </span>
+          )}
+        </div>
+
         <div className="ml-auto flex items-center gap-2">
           {hasEdits && (
             <button
@@ -167,7 +224,6 @@ function App() {
 
       {/* Main layout */}
       <div className="flex flex-1 min-h-0">
-        {/* Thumbnails */}
         <div className="w-[15%] min-w-[140px] max-w-[200px] shrink-0">
           <PageThumbnails
             session={session}
@@ -177,7 +233,6 @@ function App() {
           />
         </div>
 
-        {/* Viewer */}
         <div className="flex-1 min-w-0">
           <PdfViewer
             session={session}
@@ -190,16 +245,19 @@ function App() {
           />
         </div>
 
-        {/* Chat */}
         <div className="w-[35%] min-w-[280px] max-w-[480px] bg-gray-50 border-l shrink-0">
           <ChatPanel
             messages={currentMessages}
             currentPage={currentPage}
             isEditing={isEditing}
             onSendEdit={sendEdit}
+            onRetry={retryLastEdit}
           />
         </div>
       </div>
+
+      {/* Toast */}
+      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }

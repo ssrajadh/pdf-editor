@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import type {
   Session,
   ChatMessage,
@@ -17,38 +17,30 @@ export function usePdfSession() {
   const [session, setSession] = useState<Session | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageVersions, setPageVersions] = useState<Record<number, number>>({});
-  const [chatMessages, setChatMessages] = useState<
-    Record<number, ChatMessage[]>
-  >({});
+  const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
   const [editProgress, setEditProgress] = useState<EditProgress | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [editCount, setEditCount] = useState(0);
+  const sessionStartRef = useRef<number | null>(null);
 
-  // ---- chat helpers ----
+  const appendMsg = useCallback((page: number, msg: ChatMessage) => {
+    setChatMessages((prev) => ({
+      ...prev,
+      [page]: [...(prev[page] ?? []), msg],
+    }));
+  }, []);
 
-  const appendMsg = useCallback(
-    (page: number, msg: ChatMessage) => {
-      setChatMessages((prev) => ({
-        ...prev,
-        [page]: [...(prev[page] ?? []), msg],
-      }));
-    },
-    [],
-  );
-
-  const replaceProgressMsg = useCallback(
-    (page: number, msg: ChatMessage) => {
-      setChatMessages((prev) => {
-        const list = prev[page] ?? [];
-        const idx = list.findLastIndex((m: ChatMessage) => m.role === "progress");
-        if (idx === -1) return { ...prev, [page]: [...list, msg] };
-        const updated = [...list];
-        updated[idx] = msg;
-        return { ...prev, [page]: updated };
-      });
-    },
-    [],
-  );
+  const replaceProgressMsg = useCallback((page: number, msg: ChatMessage) => {
+    setChatMessages((prev) => {
+      const list = prev[page] ?? [];
+      const idx = list.findLastIndex((m: ChatMessage) => m.role === "progress");
+      if (idx === -1) return { ...prev, [page]: [...list, msg] };
+      const updated = [...list];
+      updated[idx] = msg;
+      return { ...prev, [page]: updated };
+    });
+  }, []);
 
   const removeProgressMsgs = useCallback((page: number) => {
     setChatMessages((prev) => ({
@@ -57,11 +49,8 @@ export function usePdfSession() {
     }));
   }, []);
 
-  // We need a ref-stable way to know current page inside WS callbacks.
-  // Store it in a ref indirectly via the pending-edit page.
   const [editingPage, setEditingPage] = useState<number | null>(null);
-
-  // ---- WebSocket handlers ----
+  const lastPromptRef = useRef<{ page: number; prompt: string } | null>(null);
 
   const handleProgress = useCallback(
     (progress: EditProgress) => {
@@ -83,8 +72,10 @@ export function usePdfSession() {
       setEditProgress(null);
       const page = result.page_num;
       setEditingPage(null);
+      lastPromptRef.current = null;
 
       setPageVersions((prev) => ({ ...prev, [page]: result.version }));
+      setEditCount((c) => c + 1);
 
       removeProgressMsgs(page);
       appendMsg(page, {
@@ -115,7 +106,7 @@ export function usePdfSession() {
     [editingPage, currentPage, appendMsg, removeProgressMsgs],
   );
 
-  const { sendEdit: wsSendEdit, isConnected, isEditing } = useWebSocket(
+  const { sendEdit: wsSendEdit, isConnected, isEditing, isReconnecting } = useWebSocket(
     session?.session_id ?? null,
     {
       onProgress: handleProgress,
@@ -123,8 +114,6 @@ export function usePdfSession() {
       onError: handleError,
     },
   );
-
-  // ---- public API ----
 
   const uploadPdf = useCallback(async (file: File) => {
     setUploading(true);
@@ -136,6 +125,8 @@ export function usePdfSession() {
       setPageVersions({});
       setChatMessages({});
       setEditProgress(null);
+      setEditCount(0);
+      sessionStartRef.current = Date.now();
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -152,6 +143,7 @@ export function usePdfSession() {
       if (!session || isEditing) return;
 
       setEditingPage(currentPage);
+      lastPromptRef.current = { page: currentPage, prompt };
 
       appendMsg(currentPage, {
         id: nextId(),
@@ -164,6 +156,13 @@ export function usePdfSession() {
     },
     [session, currentPage, isEditing, wsSendEdit, appendMsg],
   );
+
+  const retryLastEdit = useCallback(() => {
+    const last = lastPromptRef.current;
+    if (!last || isEditing) return;
+    setEditingPage(last.page);
+    wsSendEdit(last.page, last.prompt);
+  }, [isEditing, wsSendEdit]);
 
   const currentPageVersion = pageVersions[currentPage];
 
@@ -181,6 +180,10 @@ export function usePdfSession() {
     [chatMessages, currentPage],
   );
 
+  const sessionDuration = sessionStartRef.current
+    ? Math.floor((Date.now() - sessionStartRef.current) / 60000)
+    : 0;
+
   return {
     session,
     currentPage,
@@ -190,12 +193,16 @@ export function usePdfSession() {
     editProgress,
     isEditing,
     isConnected,
+    isReconnecting,
     uploading,
     uploadError,
+    editCount,
+    sessionDuration,
 
     uploadPdf,
     selectPage,
     sendEdit,
+    retryLastEdit,
     getImageUrl,
     setSession,
     setUploadError,

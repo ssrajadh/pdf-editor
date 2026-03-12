@@ -57,3 +57,25 @@ class SessionManager:
         path = self._storage_path / session_id
         if path.exists():
             shutil.rmtree(path)
+
+    def cleanup_old_sessions(self, max_age_hours: int = 24) -> int:
+        """Delete sessions older than max_age_hours. Returns count of deleted sessions."""
+        cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
+        deleted = 0
+
+        for session_dir in self._storage_path.iterdir():
+            if not session_dir.is_dir():
+                continue
+            meta_path = session_dir / "metadata.json"
+            if not meta_path.exists():
+                continue
+            try:
+                meta = json.loads(meta_path.read_text())
+                created = datetime.fromisoformat(meta["created_at"]).timestamp()
+                if created < cutoff:
+                    shutil.rmtree(session_dir)
+                    deleted += 1
+            except Exception:
+                continue
+
+        return deleted

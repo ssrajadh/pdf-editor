@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, CheckCircle2, AlertCircle, Sparkles, ShieldCheck, AlertTriangle } from "lucide-react";
+import { Send, Loader2, CheckCircle2, AlertCircle, Sparkles, ShieldCheck, AlertTriangle, RotateCcw } from "lucide-react";
 import type { ChatMessage } from "../types";
 
 interface Props {
@@ -7,6 +7,7 @@ interface Props {
   currentPage: number;
   isEditing: boolean;
   onSendEdit: (prompt: string) => void;
+  onRetry?: () => void;
 }
 
 const SUGGESTIONS = [
@@ -21,6 +22,7 @@ export default function ChatPanel({
   currentPage,
   isEditing,
   onSendEdit,
+  onRetry,
 }: Props) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -44,26 +46,39 @@ export default function ChatPanel({
     }
   };
 
+  const lastMessage = messages[messages.length - 1];
+  const showRetry = lastMessage?.role === "assistant" && lastMessage.content.startsWith("Error:") && !isEditing && onRetry;
+
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="px-4 py-3 border-b bg-white">
-        <h2 className="font-semibold text-gray-900 text-sm">
-          Edit Chat
-        </h2>
+        <h2 className="font-semibold text-gray-900 text-sm">Edit Chat</h2>
         <p className="text-xs text-gray-400 mt-0.5">Page {currentPage}</p>
       </div>
 
-      {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.length === 0 && <EmptyState onSelect={(s) => { setInput(s); }} />}
+        {messages.length === 0 && <EmptyState onSelect={(s) => setInput(s)} />}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <div key={msg.id} className="animate-fade-in">
+            <MessageBubble message={msg} />
+          </div>
         ))}
+
+        {showRetry && (
+          <div className="flex justify-start animate-fade-in">
+            <button
+              onClick={onRetry}
+              className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700
+                         px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Retry last edit
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Input */}
       <div className="p-3 border-t bg-white">
         <div className="flex items-end gap-2">
           <textarea
@@ -86,6 +101,7 @@ export default function ChatPanel({
           <button
             onClick={handleSubmit}
             disabled={isEditing || !input.trim()}
+            title="Send (Enter)"
             className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg
                        bg-blue-600 text-white hover:bg-blue-700
                        disabled:bg-gray-300 disabled:cursor-not-allowed
@@ -98,6 +114,9 @@ export default function ChatPanel({
             )}
           </button>
         </div>
+        <p className="text-[10px] text-gray-400 mt-1.5 text-right">
+          Enter to send &middot; Shift+Enter for newline
+        </p>
       </div>
     </div>
   );
@@ -151,7 +170,6 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     );
   }
 
-  // assistant
   const isError = message.content.startsWith("Error:");
   const result = message.result;
 
@@ -159,9 +177,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     <div className="flex justify-start">
       <div
         className={`max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-md text-sm ${
-          isError
-            ? "bg-red-50 text-red-700"
-            : "bg-gray-100 text-gray-800"
+          isError ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-800"
         }`}
       >
         <div className="flex items-center gap-1.5">

@@ -7,20 +7,23 @@ interface Handlers {
   onError?: (message: string) => void;
 }
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 5;
 const BASE_DELAY = 1000;
+const MAX_DELAY = 30000;
 
 export function useWebSocket(sessionId: string | null, handlers: Handlers) {
   const wsRef = useRef<WebSocket | null>(null);
   const retriesRef = useRef(0);
+  const unmountedRef = useRef(false);
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
 
   const [isConnected, setIsConnected] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
 
   const connect = useCallback(() => {
-    if (!sessionId) return;
+    if (!sessionId || unmountedRef.current) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(
@@ -30,6 +33,7 @@ export function useWebSocket(sessionId: string | null, handlers: Handlers) {
 
     ws.onopen = () => {
       setIsConnected(true);
+      setIsReconnecting(false);
       retriesRef.current = 0;
     };
 
@@ -37,16 +41,17 @@ export function useWebSocket(sessionId: string | null, handlers: Handlers) {
       setIsConnected(false);
       wsRef.current = null;
 
+      if (unmountedRef.current) return;
+
       if (retriesRef.current < MAX_RETRIES) {
-        const delay = BASE_DELAY * Math.pow(2, retriesRef.current);
+        setIsReconnecting(true);
+        const delay = Math.min(BASE_DELAY * Math.pow(2, retriesRef.current), MAX_DELAY);
         retriesRef.current += 1;
         setTimeout(connect, delay);
       }
     };
 
-    ws.onerror = () => {
-      /* onclose will fire after this */
-    };
+    ws.onerror = () => { /* onclose fires next */ };
 
     ws.onmessage = (event) => {
       let msg: Record<string, unknown>;
@@ -81,9 +86,10 @@ export function useWebSocket(sessionId: string | null, handlers: Handlers) {
   }, [sessionId]);
 
   useEffect(() => {
+    unmountedRef.current = false;
     connect();
     return () => {
-      retriesRef.current = MAX_RETRIES; // prevent reconnect on unmount
+      unmountedRef.current = true;
       wsRef.current?.close();
     };
   }, [connect]);
@@ -96,5 +102,5 @@ export function useWebSocket(sessionId: string | null, handlers: Handlers) {
     ws.send(JSON.stringify({ type: "edit", page_num: pageNum, prompt }));
   }, []);
 
-  return { sendEdit, isConnected, isEditing };
+  return { sendEdit, isConnected, isEditing, isReconnecting };
 }

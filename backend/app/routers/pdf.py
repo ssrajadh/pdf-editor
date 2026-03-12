@@ -35,16 +35,31 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     import tempfile
     from pathlib import Path
+    import pikepdf
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(pdf_bytes)
         tmp_path = Path(tmp.name)
 
     try:
-        page_count = pdf_service.get_page_count(tmp_path)
+        with pikepdf.open(tmp_path) as test_pdf:
+            if test_pdf.is_encrypted:
+                tmp_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail="Encrypted PDFs are not supported. Please remove the password and try again.")
+    except pikepdf.PasswordError:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="This PDF is password-protected. Please remove the password and try again.")
+    except HTTPException:
+        raise
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Invalid or corrupt PDF file")
+
+    try:
+        page_count = pdf_service.get_page_count(tmp_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Failed to read PDF pages. The file may be corrupt.")
 
     tmp_path.unlink(missing_ok=True)
 
