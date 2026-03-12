@@ -5,6 +5,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash-exp"
+    model_provider: str = "gemini"
+    model_timeout_seconds: int = 60
     storage_path: Path = Path("/data")
     max_file_size_mb: int = 50
     allowed_origins: str = "http://localhost:5173"
