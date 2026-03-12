@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { Pencil } from "lucide-react";
 import type { Session } from "../types";
 import { getPageImageUrl } from "../services/api";
 
@@ -55,19 +56,26 @@ export default function PageThumbnails({
           pageNum >= visibleRange.start && pageNum <= visibleRange.end;
         const isSelected = pageNum === currentPage;
         const version = pageVersions?.[pageNum];
+        const isEdited = version !== undefined && version > 0;
 
         return (
           <button
             key={pageNum}
             onClick={() => onSelectPage(pageNum)}
             className={`
-              block w-full rounded-lg overflow-hidden transition-all
+              relative block w-full rounded-lg overflow-hidden transition-all
               ${isSelected
                 ? "ring-2 ring-blue-500 ring-offset-2 ring-offset-gray-900"
                 : "hover:ring-2 hover:ring-gray-500 hover:ring-offset-1 hover:ring-offset-gray-900"
               }
             `}
           >
+            {isEdited && (
+              <div className="absolute top-1.5 right-1.5 z-10 w-5 h-5 rounded-full
+                              bg-blue-500 flex items-center justify-center shadow">
+                <Pencil className="w-3 h-3 text-white" />
+              </div>
+            )}
             {isVisible ? (
               <img
                 src={getPageImageUrl(session.session_id, pageNum, version)}

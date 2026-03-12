@@ -1,7 +1,7 @@
-import { useCallback } from "react";
-import { Upload, FileText, Loader2 } from "lucide-react";
+import { useCallback, useState } from "react";
+import { Upload, FileText, Loader2, Download } from "lucide-react";
 import { usePdfSession } from "./hooks/usePdfSession";
-import { getPageImageUrl } from "./services/api";
+import { getPageImageUrl, exportPdf } from "./services/api";
 import PdfViewer from "./components/PdfViewer";
 import PageThumbnails from "./components/PageThumbnails";
 import ChatPanel from "./components/ChatPanel";
@@ -25,6 +25,22 @@ function App() {
     setSession,
     setUploadError,
   } = usePdfSession();
+
+  const [exporting, setExporting] = useState(false);
+
+  const hasEdits = Object.values(pageVersions).some((v) => v > 0);
+
+  const handleExport = useCallback(async () => {
+    if (!session || exporting) return;
+    setExporting(true);
+    try {
+      await exportPdf(session.session_id, session.filename);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  }, [session, exporting]);
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -119,16 +135,34 @@ function App() {
         <span className="text-xs text-gray-400">
           {session.page_count} {session.page_count === 1 ? "page" : "pages"}
         </span>
-        <button
-          onClick={() => {
-            setSession(null);
-            setUploadError(null);
-          }}
-          className="ml-auto text-xs text-gray-500 hover:text-gray-700 px-3 py-1 rounded
-                     hover:bg-gray-100 transition-colors"
-        >
-          Upload new
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {hasEdits && (
+            <button
+              onClick={handleExport}
+              disabled={exporting}
+              className="flex items-center gap-1.5 text-xs font-medium text-white
+                         bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400
+                         px-3 py-1.5 rounded-lg transition-colors"
+            >
+              {exporting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              {exporting ? "Exporting..." : "Download PDF"}
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setSession(null);
+              setUploadError(null);
+            }}
+            className="text-xs text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded
+                       hover:bg-gray-100 transition-colors"
+          >
+            Upload new
+          </button>
+        </div>
       </header>
 
       {/* Main layout */}

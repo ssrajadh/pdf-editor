@@ -1,10 +1,17 @@
-"""PDF loading, page rendering, and text extraction."""
+"""PDF loading, page rendering, text extraction, and export."""
 
 import asyncio
+import io
+import json
+import logging
 import subprocess
 from pathlib import Path
 
 import pdfplumber
+import pikepdf
+from reportlab.pdfgen import canvas
+
+logger = logging.getLogger(__name__)
 
 
 def get_page_count(pdf_path: Path) -> int:
@@ -108,3 +115,168 @@ def get_page_image_path(session_path: Path, page_num: int, version: str = "lates
     if not target.exists():
         raise FileNotFoundError(f"Image not found: {target}")
     return target
+
+
+# ------------------------------------------------------------------
+# PDF export — text layer + page merging
+# ------------------------------------------------------------------
+
+
+def get_page_dimensions(pdf_path: Path) -> list[tuple[float, float]]:
+    """Return (width, height) in PDF points for each page."""
+    with pdfplumber.open(pdf_path) as pdf:
+        return [(float(p.width), float(p.height)) for p in pdf.pages]
+
+
+def build_text_layer_pdf(
+    text_blocks: list[dict],
+    page_width: float,
+    page_height: float,
+) -> bytes:
+    """Create a single-page PDF with invisible text at the original positions.
+
+    Uses renderMode 3 (invisible) so text is selectable but not visible.
+    Coordinates: pdfplumber y0 is from page top; reportlab y is from bottom.
+    """
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(page_width, page_height))
+
+    text_obj = c.beginText()
+    text_obj.setTextRenderMode(3)
+
+    current_font = ("Helvetica", 10.0)
+    text_obj.setFont(*current_font)
+
+    for block in text_blocks:
+        char = block.get("text", "")
+        if not char:
+            continue
+
+        font_size = block.get("font_size") or 10.0
+        x = block["x0"]
+        y = page_height - block["y1"]
+
+        desired_font = ("Helvetica", max(font_size, 1.0))
+        if desired_font != current_font:
+            current_font = desired_font
+            text_obj.setFont(*current_font)
+
+        text_obj.setTextOrigin(x, y)
+        text_obj.textOut(char)
+
+    c.drawText(text_obj)
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def _build_image_page_pdf(
+    image_path: Path,
+    page_width: float,
+    page_height: float,
+) -> bytes:
+    """Create a single-page PDF with the image scaled to fill the page."""
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(page_width, page_height))
+    c.drawImage(
+        str(image_path), 0, 0, page_width, page_height,
+        preserveAspectRatio=False,
+    )
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def merge_edited_page(
+    image_path: Path,
+    text_blocks: list[dict] | None,
+    page_width: float,
+    page_height: float,
+) -> pikepdf.Pdf:
+    """Build a replacement PDF page: image background + optional invisible text overlay.
+
+    Returns a single-page pikepdf.Pdf.
+    """
+    image_pdf_bytes = _build_image_page_pdf(image_path, page_width, page_height)
+    merged = pikepdf.open(io.BytesIO(image_pdf_bytes))
+
+    if text_blocks:
+        text_pdf_bytes = build_text_layer_pdf(text_blocks, page_width, page_height)
+        text_pdf = pikepdf.open(io.BytesIO(text_pdf_bytes))
+        merged.pages[0].add_overlay(text_pdf.pages[0])
+
+    return merged
+
+
+def export_pdf(session_path: Path, metadata: dict) -> Path:
+    """Produce the final output PDF with edited pages merged in.
+
+    - Unedited pages pass through byte-identical from the original.
+    - Edited pages are replaced with the edited image + preserved text layer.
+    """
+    original_pdf_path = session_path / "original.pdf"
+    output_path = session_path / "output.pdf"
+    versions = metadata.get("current_page_versions", {})
+    page_count = metadata["page_count"]
+
+    page_dims = get_page_dimensions(original_pdf_path)
+
+    output = pikepdf.open(original_pdf_path)
+
+    replacement_pdfs: list[pikepdf.Pdf] = []
+
+    try:
+        for page_num in range(1, page_count + 1):
+            version = int(versions.get(str(page_num), 0))
+            if version == 0:
+                continue
+
+            image_path = session_path / "pages" / f"page_{page_num}_v{version}.png"
+            if not image_path.exists():
+                logger.warning("Edited image missing for page %d v%d, skipping", page_num, version)
+                continue
+
+            width, height = page_dims[page_num - 1]
+
+            text_blocks = _load_text_layer_blocks(session_path, page_num, version)
+
+            replacement = merge_edited_page(image_path, text_blocks, width, height)
+            replacement_pdfs.append(replacement)
+            output.pages[page_num - 1] = replacement.pages[0]
+
+        output.save(output_path)
+    finally:
+        output.close()
+        for p in replacement_pdfs:
+            p.close()
+
+    logger.info("Exported PDF to %s", output_path)
+    return output_path
+
+
+def _load_text_layer_blocks(
+    session_path: Path, page_num: int, version: int,
+) -> list[dict] | None:
+    """Load text layer blocks for a page version. Returns None if stale or missing."""
+    version_layer = session_path / "edits" / f"page_{page_num}_v{version}_text.json"
+    if version_layer.exists():
+        data = json.loads(version_layer.read_text())
+        if data.get("stale"):
+            return None
+        blocks = data.get("blocks", [])
+        if blocks:
+            return blocks
+
+    original_layer = session_path / "edits" / f"page_{page_num}_text_layer.json"
+    if original_layer.exists():
+        data = json.loads(original_layer.read_text())
+        blocks = data.get("blocks", [])
+        if blocks:
+            return blocks
+
+    return None
+
+
+async def export_pdf_async(session_path: Path, metadata: dict) -> Path:
+    """Async wrapper around export_pdf."""
+    return await asyncio.to_thread(export_pdf, session_path, metadata)

@@ -55,3 +55,27 @@ export async function getSessionInfo(sessionId: string): Promise<Session> {
 
   return res.json();
 }
+
+export async function exportPdf(sessionId: string, filename: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/pdf/${sessionId}/export`, {
+    method: "POST",
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Export failed");
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+
+  const stem = filename.replace(/\.pdf$/i, "");
+  a.download = `${stem}_edited.pdf`;
+
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

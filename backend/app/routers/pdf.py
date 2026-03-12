@@ -1,12 +1,21 @@
+import json
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.models.schemas import UploadResponse, PageTextResponse, SessionInfoResponse
+from app.models.schemas import (
+    UploadResponse,
+    PageTextResponse,
+    SessionInfoResponse,
+    TextLayerResponse,
+)
 from app.services import pdf_service
 from app.storage.session import SessionManager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 session_mgr = SessionManager(settings.storage_path)
@@ -24,7 +33,6 @@ async def upload_pdf(file: UploadFile = File(...)):
     if len(pdf_bytes) > max_bytes:
         raise HTTPException(status_code=413, detail=f"File exceeds {settings.max_file_size_mb}MB limit")
 
-    # Get page count from raw bytes by writing to a temp location first
     import tempfile
     from pathlib import Path
 
@@ -98,6 +106,52 @@ async def get_page_text(session_id: str, page_num: int):
     )
 
 
+@router.get("/{session_id}/page/{page_num}/text-layer", response_model=TextLayerResponse)
+async def get_text_layer(session_id: str, page_num: int):
+    """Return the text layer status and content for the current version of a page."""
+    try:
+        session_path = session_mgr.get_session_path(session_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    metadata = session_mgr.get_metadata(session_id)
+    version = int(metadata["current_page_versions"].get(str(page_num), 0))
+
+    if version == 0:
+        pdf_path = session_path / "original.pdf"
+        try:
+            result = pdf_service.extract_text(pdf_path, page_num)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return TextLayerResponse(
+            session_id=session_id,
+            page_num=page_num,
+            version=0,
+            text_layer_preserved=True,
+            full_text=result["full_text"],
+        )
+
+    version_layer = session_path / "edits" / f"page_{page_num}_v{version}_text.json"
+    if version_layer.exists():
+        data = json.loads(version_layer.read_text())
+        return TextLayerResponse(
+            session_id=session_id,
+            page_num=page_num,
+            version=version,
+            text_layer_preserved=not data.get("stale", False),
+            full_text=data.get("full_text", ""),
+        )
+
+    return TextLayerResponse(
+        session_id=session_id,
+        page_num=page_num,
+        version=version,
+        text_layer_preserved=False,
+        full_text="",
+    )
+
+
 @router.get("/{session_id}/info", response_model=SessionInfoResponse)
 async def get_session_info(session_id: str):
     """Return session metadata."""
@@ -112,4 +166,32 @@ async def get_session_info(session_id: str):
         page_count=metadata["page_count"],
         created_at=metadata["created_at"],
         current_page_versions={int(k): v for k, v in metadata["current_page_versions"].items()},
+    )
+
+
+@router.post("/{session_id}/export")
+async def export_pdf(session_id: str):
+    """Export the PDF with all edits merged in. Returns the file as a download."""
+    try:
+        session_path = session_mgr.get_session_path(session_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    metadata = session_mgr.get_metadata(session_id)
+
+    try:
+        output_path = await pdf_service.export_pdf_async(session_path, metadata)
+    except Exception as e:
+        logger.error("Export failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Export failed: {e}")
+
+    original_name = metadata.get("filename", "document.pdf")
+    stem = original_name.rsplit(".", 1)[0] if "." in original_name else original_name
+    download_name = f"{stem}_edited.pdf"
+
+    return FileResponse(
+        output_path,
+        media_type="application/pdf",
+        filename=download_name,
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
     )

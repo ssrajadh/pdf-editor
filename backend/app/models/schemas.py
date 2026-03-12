@@ -65,3 +65,17 @@ class EditVersion(BaseModel):
     prompt: str
     created_at: str
     text_layer_preserved: bool
+
+
+class TextLayerResponse(BaseModel):
+    session_id: str
+    page_num: int
+    version: int
+    text_layer_preserved: bool
+    full_text: str
+
+
+class ExportResponse(BaseModel):
+    session_id: str
+    filename: str
+    pages_modified: int

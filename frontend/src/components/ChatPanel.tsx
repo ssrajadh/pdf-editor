@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, CheckCircle2, AlertCircle, Sparkles } from "lucide-react";
+import { Send, Loader2, CheckCircle2, AlertCircle, Sparkles, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { ChatMessage } from "../types";
 
 interface Props {
@@ -174,10 +174,18 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         </div>
 
         {result && (
-          <div className="mt-1.5 text-xs text-gray-500 space-y-0.5">
-            <div>Version {result.version}</div>
-            {result.text_layer_preserved && (
-              <div className="text-green-600">Text layer preserved</div>
+          <div className="mt-1.5 text-xs space-y-0.5">
+            <div className="text-gray-500">Version {result.version}</div>
+            {result.text_layer_preserved ? (
+              <div className="flex items-center gap-1 text-green-600">
+                <ShieldCheck className="w-3 h-3" />
+                Text layer preserved
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 text-amber-600">
+                <AlertTriangle className="w-3 h-3" />
+                Text layer needs rebuild
+              </div>
             )}
           </div>
         )}

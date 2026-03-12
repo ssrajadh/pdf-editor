@@ -121,9 +121,13 @@ class GeminiProvider(ModelProvider):
                 elapsed = time.monotonic() - t0
                 logger.info("Gemini API call took %.2fs (attempt %d)", elapsed, attempt + 1)
 
-                if resp.status_code == 429:
+                if resp.status_code in (429, 500, 502, 503, 504):
                     backoff = self.INITIAL_BACKOFF * (2 ** attempt)
-                    logger.warning("Rate limited (429), retrying in %.1fs", backoff)
+                    logger.warning(
+                        "Gemini API %d, retrying in %.1fs (attempt %d)",
+                        resp.status_code, backoff, attempt + 1,
+                    )
+                    last_exc = RuntimeError(f"Gemini API error {resp.status_code}")
                     await asyncio.sleep(backoff)
                     continue
 
