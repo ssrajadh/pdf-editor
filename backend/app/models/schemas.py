@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -40,18 +42,26 @@ class PageInfo(BaseModel):
 
 class EditRequest(BaseModel):
     session_id: str
-    instruction: str
-    page_number: int | None = None
-
-
-class EditProgress(BaseModel):
-    session_id: str
-    status: str
-    progress: float = 0.0
-    message: str = ""
+    page_num: int
+    prompt: str
 
 
 class EditResult(BaseModel):
     session_id: str
-    status: str
-    modified_pages: list[int] = []
+    page_num: int
+    version: int
+    processing_time_ms: float
+    text_layer_preserved: bool
+
+
+class EditProgress(BaseModel):
+    stage: str
+    message: str
+    timestamp: datetime
+
+
+class EditVersion(BaseModel):
+    version: int
+    prompt: str
+    created_at: str
+    text_layer_preserved: bool

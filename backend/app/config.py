@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash-exp"
+    gemini_model: str = "gemini-2.5-flash-image"
     model_provider: str = "gemini"
     model_timeout_seconds: int = 60
     storage_path: Path = Path("/data")

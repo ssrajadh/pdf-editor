@@ -12,7 +12,6 @@ import sys
 import time
 from pathlib import Path
 
-# Add backend to path so app imports work
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PIL import Image
@@ -22,13 +21,18 @@ from app.services.model_provider import ProviderFactory
 
 
 async def main():
-    # Determine input image
     if len(sys.argv) > 1:
         img_path = Path(sys.argv[1])
     else:
-        # Find the most recent session's page 1 image
         data_dir = settings.storage_path
-        sessions = sorted(data_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not data_dir.exists():
+            print("Storage directory does not exist. Upload a PDF first or pass an image path.")
+            sys.exit(1)
+        sessions = sorted(
+            (p for p in data_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
         img_path = None
         for s in sessions:
             pages_dir = s / "pages"

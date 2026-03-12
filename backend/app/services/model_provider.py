@@ -1,6 +1,7 @@
 """AI model abstraction layer."""
 
 import abc
+import asyncio
 import base64
 import io
 import logging
@@ -47,7 +48,7 @@ class GeminiProvider(ModelProvider):
     MAX_RETRIES = 3
     INITIAL_BACKOFF = 2.0
 
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp", timeout: int = 60):
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash-image", timeout: int = 60):
         self._api_key = api_key
         self._model = model
         self._timeout = timeout
@@ -119,7 +120,6 @@ class GeminiProvider(ModelProvider):
                 if resp.status_code == 429:
                     backoff = self.INITIAL_BACKOFF * (2 ** attempt)
                     logger.warning("Rate limited (429), retrying in %.1fs", backoff)
-                    import asyncio
                     await asyncio.sleep(backoff)
                     continue
 
