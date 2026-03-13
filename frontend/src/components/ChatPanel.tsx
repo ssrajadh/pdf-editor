@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, CheckCircle2, AlertCircle, Sparkles, ShieldCheck, AlertTriangle, RotateCcw } from "lucide-react";
+import { Send, Loader2, CheckCircle2, AlertCircle, Sparkles, RotateCcw } from "lucide-react";
 import type { ChatMessage } from "../types";
+import OperationBreakdown from "./OperationBreakdown";
+import ExecutionPlanPreview from "./ExecutionPlanPreview";
 
 interface Props {
   messages: ChatMessage[];
@@ -148,6 +150,43 @@ function EmptyState({ onSelect }: { onSelect: (s: string) => void }) {
   );
 }
 
+function ProgressBubble({ message }: { message: ChatMessage }) {
+  const { stage, op_index, total_ops } = message;
+  const isFastPhase = stage === "programmatic";
+  const isSlowPhase = stage === "generating";
+
+  const hasOpInfo = op_index !== undefined && total_ops !== undefined && total_ops > 0;
+  const phaseIcon = isFastPhase ? "⚡" : isSlowPhase ? "🎨" : null;
+
+  return (
+    <div className="flex justify-center">
+      <div
+        className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-full transition-colors ${
+          isFastPhase
+            ? "text-green-700 bg-green-50"
+            : isSlowPhase
+              ? "text-blue-700 bg-blue-50"
+              : "text-gray-500 bg-gray-100"
+        }`}
+      >
+        <Loader2
+          className={`w-3 h-3 animate-spin ${
+            isFastPhase ? "text-green-500" : isSlowPhase ? "text-blue-500" : ""
+          }`}
+        />
+        <span>
+          {hasOpInfo && (
+            <span className="font-medium">
+              {phaseIcon} {op_index + 1}/{total_ops}:{" "}
+            </span>
+          )}
+          {message.content}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
   if (message.role === "user") {
     return (
@@ -160,14 +199,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   }
 
   if (message.role === "progress") {
-    return (
-      <div className="flex justify-center">
-        <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          {message.content}
-        </div>
-      </div>
-    );
+    return <ProgressBubble message={message} />;
   }
 
   const isError = message.content.startsWith("Error:");
@@ -176,7 +208,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-start">
       <div
-        className={`max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-md text-sm ${
+        className={`max-w-[95%] px-3 py-2 rounded-2xl rounded-bl-md text-sm ${
           isError ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-800"
         }`}
       >
@@ -190,21 +222,15 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         </div>
 
         {result && (
-          <div className="mt-1.5 text-xs space-y-0.5">
-            <div className="text-gray-500">Version {result.version}</div>
-            {result.text_layer_preserved ? (
-              <div className="flex items-center gap-1 text-green-600">
-                <ShieldCheck className="w-3 h-3" />
-                Text layer preserved
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 text-amber-600">
-                <AlertTriangle className="w-3 h-3" />
-                Text layer needs rebuild
-              </div>
-            )}
-          </div>
+          <>
+            <div className="mt-1 text-xs text-gray-500">
+              Version {result.version}
+            </div>
+            <OperationBreakdown result={result} />
+          </>
         )}
+
+        {message.plan && <ExecutionPlanPreview plan={message.plan} />}
       </div>
     </div>
   );

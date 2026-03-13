@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Pencil } from "lucide-react";
-import type { Session } from "../types";
+import type { Session, PageEditType } from "../types";
 import { getPageImageUrl } from "../services/api";
 
 interface Props {
@@ -8,16 +7,53 @@ interface Props {
   currentPage: number;
   onSelectPage: (page: number) => void;
   pageVersions?: Record<number, number>;
+  pageEditTypes?: Record<number, PageEditType>;
 }
 
 const THUMB_WIDTH = 150;
 const BUFFER = 3;
+
+function EditTypeIndicator({ editType }: { editType: PageEditType }) {
+  const hasProgram = editType.hasProgram;
+  const hasVisual = editType.hasVisual;
+  if (!hasProgram && !hasVisual) return null;
+
+  let label: string;
+  let bgClass: string;
+  if (hasProgram && hasVisual) {
+    label = "⚡🎨";
+    bgClass = "bg-purple-500";
+  } else if (hasProgram) {
+    label = "⚡";
+    bgClass = "bg-green-500";
+  } else {
+    label = "🎨";
+    bgClass = "bg-blue-500";
+  }
+
+  return (
+    <div
+      className={`absolute top-1.5 right-1.5 z-10 h-5 px-1 rounded-full
+                  ${bgClass} flex items-center justify-center shadow text-[10px] leading-none`}
+      title={
+        hasProgram && hasVisual
+          ? "Programmatic + AI edits"
+          : hasProgram
+            ? "Programmatic edit"
+            : "AI edit"
+      }
+    >
+      {label}
+    </div>
+  );
+}
 
 export default function PageThumbnails({
   session,
   currentPage,
   onSelectPage,
   pageVersions,
+  pageEditTypes,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [visibleRange, setVisibleRange] = useState({ start: 1, end: 10 });
@@ -57,6 +93,7 @@ export default function PageThumbnails({
         const isSelected = pageNum === currentPage;
         const version = pageVersions?.[pageNum];
         const isEdited = version !== undefined && version > 0;
+        const editType = pageEditTypes?.[pageNum];
 
         return (
           <button
@@ -70,11 +107,8 @@ export default function PageThumbnails({
               }
             `}
           >
-            {isEdited && (
-              <div className="absolute top-1.5 right-1.5 z-10 w-5 h-5 rounded-full
-                              bg-blue-500 flex items-center justify-center shadow">
-                <Pencil className="w-3 h-3 text-white" />
-              </div>
+            {isEdited && editType && (
+              <EditTypeIndicator editType={editType} />
             )}
             {isVisible ? (
               <img

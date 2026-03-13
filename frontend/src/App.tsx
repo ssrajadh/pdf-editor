@@ -12,6 +12,7 @@ function App() {
     session,
     currentPage,
     pageVersions,
+    pageEditTypes,
     currentPageVersion,
     currentMessages,
     editProgress,
@@ -230,6 +231,7 @@ function App() {
             currentPage={currentPage}
             onSelectPage={selectPage}
             pageVersions={pageVersions}
+            pageEditTypes={pageEditTypes}
           />
         </div>
 
@@ -242,6 +244,7 @@ function App() {
             pageVersion={currentPageVersion}
             isEditing={isEditing}
             editProgress={editProgress}
+            editType={pageEditTypes[currentPage]}
           />
         </div>
 

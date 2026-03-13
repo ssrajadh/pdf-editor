@@ -3,7 +3,9 @@ import type {
   Session,
   ChatMessage,
   EditProgress,
-  EditResult,
+  ExecutionResult,
+  ExecutionPlan,
+  PageEditType,
 } from "../types";
 import { uploadPdf as apiUploadPdf, getPageImageUrl } from "../services/api";
 import { useWebSocket } from "./useWebSocket";
@@ -17,12 +19,15 @@ export function usePdfSession() {
   const [session, setSession] = useState<Session | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageVersions, setPageVersions] = useState<Record<number, number>>({});
+  const [pageEditTypes, setPageEditTypes] = useState<Record<number, PageEditType>>({});
   const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
   const [editProgress, setEditProgress] = useState<EditProgress | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [editCount, setEditCount] = useState(0);
   const sessionStartRef = useRef<number | null>(null);
+
+  const currentPlanRef = useRef<ExecutionPlan | null>(null);
 
   const appendMsg = useCallback((page: number, msg: ChatMessage) => {
     setChatMessages((prev) => ({
@@ -55,35 +60,64 @@ export function usePdfSession() {
   const handleProgress = useCallback(
     (progress: EditProgress) => {
       setEditProgress(progress);
+
+      if (progress.plan) {
+        currentPlanRef.current = progress.plan;
+      }
+
       const page = editingPage ?? currentPage;
+      const totalOps = currentPlanRef.current?.operations.length;
+
       replaceProgressMsg(page, {
         id: "progress-live",
         role: "progress",
         content: progress.message,
         timestamp: progress.timestamp,
         stage: progress.stage,
+        op_index: progress.op_index,
+        total_ops: totalOps,
       });
     },
     [editingPage, currentPage, replaceProgressMsg],
   );
 
   const handleComplete = useCallback(
-    (result: EditResult) => {
+    (result: ExecutionResult) => {
       setEditProgress(null);
       const page = result.page_num;
+      const plan = currentPlanRef.current;
+      currentPlanRef.current = null;
       setEditingPage(null);
       lastPromptRef.current = null;
 
       setPageVersions((prev) => ({ ...prev, [page]: result.version }));
-      setEditCount((c) => c + 1);
 
+      setPageEditTypes((prev) => {
+        const existing = prev[page] ?? { hasProgram: false, hasVisual: false };
+        return {
+          ...prev,
+          [page]: {
+            hasProgram: existing.hasProgram || result.programmatic_count > 0,
+            hasVisual: existing.hasVisual || result.visual_count > 0,
+          },
+        };
+      });
+
+      setEditCount((c) => c + 1);
       removeProgressMsgs(page);
+
+      const allProgrammatic = result.visual_count === 0 && result.programmatic_count > 0;
+      const content = allProgrammatic
+        ? `Edit applied in ${result.total_time_ms}ms`
+        : `Edit applied in ${(result.total_time_ms / 1000).toFixed(1)}s`;
+
       appendMsg(page, {
         id: nextId(),
         role: "assistant",
-        content: `Edit applied in ${(result.processing_time_ms / 1000).toFixed(1)}s`,
+        content,
         timestamp: new Date().toISOString(),
         result,
+        plan: plan ?? undefined,
       });
     },
     [appendMsg, removeProgressMsgs],
@@ -94,6 +128,7 @@ export function usePdfSession() {
       setEditProgress(null);
       const page = editingPage ?? currentPage;
       setEditingPage(null);
+      currentPlanRef.current = null;
 
       removeProgressMsgs(page);
       appendMsg(page, {
@@ -123,6 +158,7 @@ export function usePdfSession() {
       setSession(result);
       setCurrentPage(1);
       setPageVersions({});
+      setPageEditTypes({});
       setChatMessages({});
       setEditProgress(null);
       setEditCount(0);
@@ -188,6 +224,7 @@ export function usePdfSession() {
     session,
     currentPage,
     pageVersions,
+    pageEditTypes,
     currentPageVersion,
     currentMessages,
     editProgress,

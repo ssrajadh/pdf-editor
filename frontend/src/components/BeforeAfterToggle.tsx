@@ -1,9 +1,22 @@
+import type { PageEditType } from "../types";
+
 interface Props {
   showOriginal: boolean;
   onToggle: (showOriginal: boolean) => void;
+  editType?: PageEditType;
 }
 
-export default function BeforeAfterToggle({ showOriginal, onToggle }: Props) {
+function editLabel(editType?: PageEditType): string {
+  if (!editType) return "Edited";
+  if (editType.hasProgram && editType.hasVisual) return "Edited (mixed)";
+  if (editType.hasProgram) return "Edited (programmatic)";
+  if (editType.hasVisual) return "Edited (AI)";
+  return "Edited";
+}
+
+export default function BeforeAfterToggle({ showOriginal, onToggle, editType }: Props) {
+  const label = editLabel(editType);
+
   return (
     <div className="inline-flex rounded-lg bg-gray-200 p-0.5 text-sm">
       <button
@@ -24,7 +37,7 @@ export default function BeforeAfterToggle({ showOriginal, onToggle }: Props) {
             : "text-gray-500 hover:text-gray-700"
         }`}
       >
-        Edited
+        {label}
       </button>
     </div>
   );

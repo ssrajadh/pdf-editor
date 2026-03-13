@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
-import type { Session, EditProgress } from "../types";
+import type { Session, EditProgress, PageEditType } from "../types";
 import BeforeAfterToggle from "./BeforeAfterToggle";
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   pageVersion?: number;
   isEditing: boolean;
   editProgress: EditProgress | null;
+  editType?: PageEditType;
 }
 
 export default function PdfViewer({
@@ -21,6 +22,7 @@ export default function PdfViewer({
   pageVersion,
   isEditing,
   editProgress,
+  editType,
 }: Props) {
   const [loading, setLoading] = useState(true);
   const [imgError, setImgError] = useState(false);
@@ -52,6 +54,7 @@ export default function PdfViewer({
           <BeforeAfterToggle
             showOriginal={showOriginal}
             onToggle={setShowOriginal}
+            editType={editType}
           />
         )}
       </div>

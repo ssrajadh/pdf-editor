@@ -1,9 +1,9 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import type { EditProgress, EditResult } from "../types";
+import type { EditProgress, ExecutionResult, ExecutionPlan } from "../types";
 
 interface Handlers {
   onProgress?: (progress: EditProgress) => void;
-  onComplete?: (result: EditResult) => void;
+  onComplete?: (result: ExecutionResult) => void;
   onError?: (message: string) => void;
 }
 
@@ -69,12 +69,14 @@ export function useWebSocket(sessionId: string | null, handlers: Handlers) {
             stage: msg.stage as string,
             message: msg.message as string,
             timestamp: msg.timestamp as string,
+            plan: msg.plan as ExecutionPlan | undefined,
+            op_index: msg.op_index as number | undefined,
           });
           break;
 
         case "complete":
           setIsEditing(false);
-          h.onComplete?.(msg.result as EditResult);
+          h.onComplete?.(msg.result as ExecutionResult);
           break;
 
         case "error":
