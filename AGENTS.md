@@ -38,7 +38,7 @@ pdf-editor/
 │   │   │   └── orchestrator_plan.py # System + user prompt templates for the planning LLM
 │   │   ├── models/
 │   │   │   └── schemas.py       # Pydantic models: ExecutionPlan, TextReplaceOp, StyleChangeOp, VisualRegenerateOp,
-│   │   │                        #   OperationResult, ExecutionResult, TextReplaceResult, StyleChangeResult, etc.
+│   │   │                        #   OperationResult, ExecutionResult, TextReplaceResult, StyleChangeResult, FontInfo, etc.
 │   │   └── storage/
 │   │       └── session.py       # SessionManager: CRUD, get_working_pdf_path (lazy copy), cleanup_old_sessions
 │   ├── tests/
@@ -48,7 +48,8 @@ pdf-editor/
 │   │   ├── test_visual_description.py # Vision model visual element description (requires API key)
 │   │   ├── test_model_provider.py     # Gemini API integration test
 │   │   ├── test_edit_ws.py            # WebSocket endpoint tests
-│   │   └── test_orchestrator_prompt.py # Prompt & JSON parsing tests
+│   │   ├── test_orchestrator_prompt.py # Prompt & JSON parsing tests
+│   │   └── test_layout_awareness.py   # Layout analyzer + layout-aware planner tests
 │   ├── requirements.txt
 │   └── pyproject.toml
 ├── frontend/
@@ -132,6 +133,7 @@ Config loads from `../.env` then `.env` (so it works from both `backend/` and pr
 └── edits/
     ├── page_1_history.json         # [{version, prompt, created_at, text_layer_preserved}]
     ├── page_1_v0_vis_desc.txt      # Cached visual element description for planning
+    ├── page_1_v0_layout.json       # Cached layout analysis (complexity, fonts, columns, density)
     ├── page_1_v1_text.json         # Text layer: {full_text, blocks} or {stale: true}
     └── page_1_text_layer.json      # Original text layer (fallback for export)
 ```
@@ -139,7 +141,7 @@ Config loads from `../.env` then `.env` (so it works from both `backend/` and pr
 ## Edit Pipeline — How It Works
 
 ### 1. Planning Phase
-The orchestrator builds **PageContext** (text blocks, page dimensions, visual element description from a vision model) and sends it along with the user's instruction to the planning LLM (`gemini-2.5-flash`). The planner returns an `ExecutionPlan` — a JSON object with typed operations:
+The orchestrator builds **PageContext** (text blocks, page dimensions, visual element description, and **layout analysis** — complexity, font summary, column count, text density) and sends it along with the user's instruction to the planning LLM (`gemini-2.5-flash`). The planner uses layout metadata to adjust routing decisions and confidence scores. The planner returns an `ExecutionPlan` — a JSON object with typed operations:
 
 - **`text_replace`**: swap specific text in the PDF structure (programmatic, ~100ms)
 - **`style_change`**: modify font, color, size (programmatic, ~100ms)
@@ -191,6 +193,7 @@ The WebSocket streams rich progress events:
 ## Key Design Decisions
 
 - **Two-tier editing**: programmatic for text (fast, precise, perfect text layer) + visual for layout/charts/images (flexible, AI-powered)
+- **Layout-aware planner**: `analyze_layout_complexity()` uses PyMuPDF to classify pages as simple/moderate/complex based on column count, font diversity, CID fonts, text density, and image presence. The planner adjusts confidence scores and routing decisions based on layout complexity (e.g., complex layouts only allow same-length text swaps programmatically). Layout analysis is cached per page version.
 - **Orchestrator planner pattern**: LLM decomposes instructions into optimal operation mix; execution engine routes each operation to the right path
 - **Working PDF strategy**: `original.pdf` stays pristine; `working.pdf` (lazy copy) accumulates programmatic edits; visual edits produce images only
 - **Compound degradation prevention**: visual model always sees a clean PDF-rendered image via `get_current_base_image()`, never a prior AI output — prevents quality loss over multiple edits
@@ -225,6 +228,7 @@ The WebSocket streams rich progress events:
 - **Orchestrator planner**: vision-based page analysis, structured JSON planning via Gemini 2.5 Flash
 - **Programmatic PDF editor**: PyMuPDF redact-and-overlay (text replace, style change), overflow detection, font matching, background color detection
 - **Two-tier execution pipeline**: programmatic-first execution, visual fallback, compound degradation prevention
+- **Layout-aware planning**: layout complexity analysis (simple/moderate/complex) with font summary, column detection, text density, cached per page version
 - **Text layer handling**: programmatic_edit (perfect), ocr (stale), mixed, original
 - Rich WebSocket progress with plan data and per-operation tracking
 - Per-session locking to prevent concurrent edits
@@ -266,6 +270,10 @@ cd backend
 
 # Visual description — requires API key
 .venv/bin/python -m tests.test_visual_description
+
+# Layout awareness — unit tests (no API key) + planner tests (requires API key)
+.venv/bin/python -m tests.test_layout_awareness
+.venv/bin/python -m tests.test_layout_awareness --real  # includes real PDF tests
 
 # Gemini API integration
 .venv/bin/python -m tests.test_model_provider

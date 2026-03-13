@@ -115,6 +115,48 @@ operations. Identify each distinct change and create a separate operation for it
 visual_regenerate entries.
 
 ═══════════════════════════════════════════════════════════════════════════════
+LAYOUT AWARENESS
+═══════════════════════════════════════════════════════════════════════════════
+
+You will receive layout metadata about the page. Use it to adjust your routing decisions:
+
+- layout_complexity: "simple" | "moderate" | "complex"
+- has_cid_fonts: whether the page uses CID (multi-byte) fonts
+- column_count: number of text columns
+- font_summary: list of fonts with their standard-font compatibility
+
+Routing adjustments based on layout:
+
+SIMPLE layout:
+  - text_replace is highly reliable. Use it for any text swap where the replacement \
+is within 120% of the original character length.
+  - style_change works well for color and size changes.
+  - confidence can be 0.8-0.95 for programmatic ops.
+
+MODERATE layout:
+  - text_replace works for same-length or shorter replacements only.
+  - Be cautious with replacements that change character count by more than 2-3 characters.
+  - Reduce confidence by 0.1-0.2 compared to simple layouts.
+  - style_change: font size changes are risky (may overflow), color changes are safe.
+
+COMPLEX layout:
+  - text_replace ONLY for exact same-length swaps (e.g., "Q3" → "Q4", "2024" → "2025").
+  - Any replacement that changes character count: use visual_regenerate.
+  - style_change: only color changes, no size changes.
+  - Confidence for programmatic ops should be 0.5-0.7 max.
+  - When in doubt, use visual_regenerate. Complex layouts are where programmatic \
+edits are most likely to produce visible artifacts.
+
+CID FONTS:
+  - If the target text uses a CID font (check font_summary), programmatic replacement \
+will use a standard font substitute. This is acceptable for common text but will \
+be visually noticeable for decorative or distinctive fonts.
+  - If the CID font is a standard-looking sans-serif or serif (flagged as "standard" in \
+font_summary): proceed with text_replace but note the font substitution in reasoning.
+  - If the CID font appears decorative or distinctive (flagged as "non-standard"): \
+prefer visual_regenerate.
+
+═══════════════════════════════════════════════════════════════════════════════
 FEW-SHOT EXAMPLES
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -336,6 +378,14 @@ User instruction: {user_instruction}
 
 Page dimensions: {page_width} x {page_height} points
 
+Page layout analysis:
+- Layout complexity: {layout_complexity}
+- Column count: {column_count}
+- CID fonts present: {has_cid_fonts}
+- Text density: {text_density}
+- Fonts on this page:
+{font_summary_formatted}
+
 Page text:
 \"\"\"
 {page_text}
@@ -358,6 +408,11 @@ def build_orchestrator_messages(
     page_width: float,
     page_height: float,
     visual_description: str = "No visual elements detected.",
+    layout_complexity: str = "simple",
+    column_count: int = 1,
+    has_cid_fonts: bool = False,
+    text_density: float = 0.0,
+    font_summary_formatted: str = "  (no fonts detected)",
 ) -> list[dict]:
     """Build the messages array for the Gemini text-only API call."""
     user_content = ORCHESTRATOR_USER_TEMPLATE.format(
@@ -367,6 +422,11 @@ def build_orchestrator_messages(
         page_width=page_width,
         page_height=page_height,
         visual_description=visual_description,
+        layout_complexity=layout_complexity,
+        column_count=column_count,
+        has_cid_fonts=has_cid_fonts,
+        text_density=text_density,
+        font_summary_formatted=font_summary_formatted,
     )
 
     return [

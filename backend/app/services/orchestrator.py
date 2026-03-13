@@ -15,6 +15,7 @@ from PIL import Image
 from app.models.schemas import (
     ExecutionPlan,
     ExecutionResult,
+    FontInfo,
     OperationResult,
     OperationType,
     TextBlock,
@@ -59,6 +60,156 @@ class PageContext:
     full_text: str
     text_blocks: list[TextBlock] = field(default_factory=list)
     visual_description: str = ""
+    layout_complexity: str = "simple"
+    font_summary: list[FontInfo] = field(default_factory=list)
+    has_cid_fonts: bool = False
+    column_count: int = 1
+    text_density: float = 0.0
+
+
+# Standard base-14 font family roots for matching
+_STANDARD_ROOTS = {
+    "helvetica", "arial", "courier", "times", "symbol", "zapfdingbats",
+    "calibri", "cambria", "georgia", "verdana", "tahoma", "trebuchet",
+    "consolas", "lucida", "palatino", "garamond",
+}
+
+
+def _is_standard_font(font_name: str) -> bool:
+    """Check if a font name maps cleanly to a standard base-14 family."""
+    lower = font_name.lower()
+    for prefix_part in lower.replace("+", "-").replace("_", "-").split("-"):
+        if any(root in prefix_part for root in _STANDARD_ROOTS):
+            return True
+    return False
+
+
+def analyze_layout_complexity(pdf_path: Path, page_num: int) -> dict:
+    """Analyze page layout using PyMuPDF to determine complexity.
+
+    Returns dict with: layout_complexity, font_summary, has_cid_fonts,
+                       column_count, text_density
+    """
+    import fitz
+
+    doc = fitz.open(str(pdf_path))
+    page = doc[page_num - 1]
+
+    # 1. Collect font info and text spans
+    font_usage: dict[str, dict] = {}  # font_name -> {count, sample, is_cid}
+    span_x_positions: list[float] = []
+    total_text_area = 0.0
+
+    blocks_data = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+    for block in blocks_data.get("blocks", []):
+        if block.get("type") != 0:  # type 0 = text
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                font_name = span.get("font", "unknown")
+                text = span.get("text", "").strip()
+                if not text:
+                    continue
+
+                if font_name not in font_usage:
+                    font_usage[font_name] = {
+                        "count": 0,
+                        "sample": "",
+                        "is_cid": False,
+                    }
+                font_usage[font_name]["count"] += 1
+                if len(font_usage[font_name]["sample"]) < 30:
+                    font_usage[font_name]["sample"] += text[:30]
+
+                bbox = span.get("bbox", (0, 0, 0, 0))
+                span_x_positions.append(bbox[0])
+
+                w = bbox[2] - bbox[0]
+                h = bbox[3] - bbox[1]
+                if w > 0 and h > 0:
+                    total_text_area += w * h
+
+    # Check which fonts are CID via the page font list
+    page_fonts = page.get_fonts()
+    cid_font_names = set()
+    for font_tuple in page_fonts:
+        ftype = font_tuple[2] if len(font_tuple) > 2 else ""
+        fname = font_tuple[3] if len(font_tuple) > 3 else ""
+        encoding = font_tuple[5] if len(font_tuple) > 5 else ""
+        if ftype == "Type0" or "Identity" in str(encoding):
+            clean_name = fname.split("+")[-1] if "+" in fname else fname
+            cid_font_names.add(clean_name)
+
+    for fname, info in font_usage.items():
+        clean = fname.split("+")[-1] if "+" in fname else fname
+        if clean in cid_font_names or any(c in fname for c in cid_font_names):
+            info["is_cid"] = True
+
+    has_cid = any(v["is_cid"] for v in font_usage.values())
+
+    # 2. Build FontInfo list
+    font_summary = []
+    for fname, info in sorted(font_usage.items(), key=lambda x: -x[1]["count"]):
+        font_summary.append(FontInfo(
+            name=fname,
+            is_standard=_is_standard_font(fname),
+            is_cid=info["is_cid"],
+            usage_count=info["count"],
+            sample_text=info["sample"][:30],
+        ))
+
+    # 3. Estimate column count by clustering x-positions
+    column_count = 1
+    if span_x_positions:
+        rounded = sorted(set(round(x / 20) * 20 for x in span_x_positions))
+        if len(rounded) >= 2:
+            gaps = [rounded[i + 1] - rounded[i] for i in range(len(rounded) - 1)]
+            significant_gaps = sum(1 for g in gaps if g > 80)
+            column_count = significant_gaps + 1
+
+    # 4. Text density
+    page_area = page.rect.width * page.rect.height
+    text_density = total_text_area / page_area if page_area > 0 else 0
+
+    # 5. Check for images
+    image_count = len(page.get_images())
+
+    doc.close()
+
+    # 6. Complexity scoring
+    score = 0
+    if has_cid:
+        score += 2
+    if column_count > 1:
+        score += column_count - 1
+    if len(font_usage) > 3:
+        score += 1
+    if text_density > 0.6:
+        score += 1
+    if image_count > 0:
+        score += 1
+
+    if score <= 1:
+        complexity = "simple"
+    elif score <= 3:
+        complexity = "moderate"
+    else:
+        complexity = "complex"
+
+    logger.info(
+        "Layout analysis page %d: complexity=%s (score=%d), columns=%d, "
+        "fonts=%d (cid=%s), density=%.2f, images=%d",
+        page_num, complexity, score, column_count,
+        len(font_usage), has_cid, text_density, image_count,
+    )
+
+    return {
+        "layout_complexity": complexity,
+        "font_summary": font_summary,
+        "has_cid_fonts": has_cid,
+        "column_count": column_count,
+        "text_density": round(text_density, 3),
+    }
 
 
 async def describe_visual_elements(
@@ -119,6 +270,27 @@ async def build_page_context(
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(visual_description)
 
+    # Layout analysis (cached per page version — only changes on working PDF edits)
+    layout_cache_path = (
+        session_path / "edits" / f"page_{page_num}_v{current_version}_layout.json"
+    )
+    if layout_cache_path.exists():
+        layout_info = json.loads(layout_cache_path.read_text())
+        layout_info["font_summary"] = [
+            FontInfo(**f) for f in layout_info["font_summary"]
+        ]
+        logger.info("Using cached layout analysis for page %d v%d", page_num, current_version)
+    else:
+        working_pdf = session_path / "working.pdf"
+        analyze_pdf = working_pdf if working_pdf.exists() else pdf_path
+        layout_info = await asyncio.to_thread(
+            analyze_layout_complexity, analyze_pdf, page_num,
+        )
+        layout_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_data = dict(layout_info)
+        cache_data["font_summary"] = [f.model_dump() for f in cache_data["font_summary"]]
+        layout_cache_path.write_text(json.dumps(cache_data))
+
     return PageContext(
         page_num=page_num,
         page_width=page_width,
@@ -126,6 +298,11 @@ async def build_page_context(
         full_text=full_text,
         text_blocks=text_blocks,
         visual_description=visual_description,
+        layout_complexity=layout_info["layout_complexity"],
+        font_summary=layout_info["font_summary"],
+        has_cid_fonts=layout_info["has_cid_fonts"],
+        column_count=layout_info["column_count"],
+        text_density=layout_info["text_density"],
     )
 
 
@@ -140,6 +317,27 @@ def page_context_to_text_blocks_json(ctx: PageContext) -> str:
         for b in ctx.text_blocks
     ]
     return json.dumps(blocks, indent=2)
+
+
+def format_font_summary(fonts: list[FontInfo]) -> str:
+    """Format font summary list for the planner prompt."""
+    if not fonts:
+        return "  (no fonts detected)"
+    lines = []
+    for f in fonts:
+        flags = []
+        if f.is_cid:
+            flags.append("CID")
+        if f.is_standard:
+            flags.append("standard")
+        else:
+            flags.append("non-standard")
+        flag_str = ", ".join(flags)
+        lines.append(
+            f"  - {f.name} [{flag_str}] — {f.usage_count} spans — "
+            f'sample: "{f.sample_text}"'
+        )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +423,7 @@ class Orchestrator:
         )
 
         text_blocks_json = page_context_to_text_blocks_json(ctx)
+        font_summary_formatted = format_font_summary(ctx.font_summary)
         from app.prompts.orchestrator_plan import ORCHESTRATOR_USER_TEMPLATE
 
         user_content = ORCHESTRATOR_USER_TEMPLATE.format(
@@ -234,6 +433,11 @@ class Orchestrator:
             page_width=ctx.page_width,
             page_height=ctx.page_height,
             visual_description=ctx.visual_description,
+            layout_complexity=ctx.layout_complexity,
+            column_count=ctx.column_count,
+            has_cid_fonts=ctx.has_cid_fonts,
+            text_density=ctx.text_density,
+            font_summary_formatted=font_summary_formatted,
         )
 
         raw = await self.provider.plan_edit(

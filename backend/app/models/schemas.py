@@ -15,6 +15,16 @@ class TextBlock(BaseModel):
     font_size: float = 0.0
 
 
+class FontInfo(BaseModel):
+    """Font metadata for layout-aware planning."""
+
+    name: str
+    is_standard: bool
+    is_cid: bool
+    usage_count: int
+    sample_text: str = ""
+
+
 class UploadResponse(BaseModel):
     session_id: str
     filename: str

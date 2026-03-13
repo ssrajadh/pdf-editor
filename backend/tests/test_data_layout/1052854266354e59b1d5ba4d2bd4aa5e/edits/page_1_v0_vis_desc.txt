@@ -1,0 +1,5 @@
+The page is primarily text-based with a clean, single-column layout.
+
+- **Divider:** A thin horizontal line separates the "Soham Rajadhyaksha" header from the contact information below it, centrally positioned near the top of the page.
+- **Bullet Points:** Standard black circular bullet points are used consistently throughout the "WORK EXPERIENCE" and "PROJECTS" sections to delineate individual achievements and responsibilities.
+- **Bullet Points:** Standard black circular bullet points are used in the "SKILLS" section to list different skill categories.
