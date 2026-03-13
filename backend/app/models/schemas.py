@@ -121,6 +121,14 @@ class TextReplaceOp(BaseModel):
     type: Literal["text_replace"] = "text_replace"
     original_text: str = Field(description="Exact text to find in the PDF")
     replacement_text: str = Field(description="What to replace it with")
+    context_before: str | None = Field(
+        default=None,
+        description="~20 chars of text immediately before original_text for disambiguation",
+    )
+    context_after: str | None = Field(
+        default=None,
+        description="~20 chars of text immediately after original_text for disambiguation",
+    )
     match_strategy: Literal["exact", "contains", "first_occurrence"] = Field(
         description="How to locate the text on the page"
     )

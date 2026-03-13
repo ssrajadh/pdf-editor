@@ -577,7 +577,8 @@ class Orchestrator:
     ) -> ExecutionResult:
         """Execute a plan's operations in order.
 
-        Programmatic ops modify the working PDF and re-render from it.
+        Text_replace ops on the same page are batched into a single
+        apply_text_replacements_batch() call for atomicity and performance.
         Visual ops always get a fresh PDF-rendered base image (never an
         AI-generated one) via _get_visual_edit_base_image().
         """
@@ -590,12 +591,35 @@ class Orchestrator:
         working_pdf_modified = False
         base_source = ""
 
-        for exec_pos, op_idx in enumerate(plan.execution_order):
+        # Collect text_replace ops for batching (they run first per execution_order)
+        text_replace_batch: list[tuple[int, TextReplaceOp]] = []  # (op_idx, op)
+        remaining_ops: list[tuple[int, TextReplaceOp | StyleChangeOp | VisualRegenerateOp]] = []
+
+        for op_idx in plan.execution_order:
             if op_idx < 0 or op_idx >= len(plan.operations):
                 logger.warning("Skipping invalid execution_order index %d", op_idx)
                 continue
-
             op = plan.operations[op_idx]
+            if isinstance(op, TextReplaceOp) and op.confidence >= 0.5:
+                text_replace_batch.append((op_idx, op))
+            else:
+                remaining_ops.append((op_idx, op))
+
+        # Execute text_replace batch
+        if text_replace_batch:
+            batch_results = await self._execute_text_replace_batch(
+                text_replace_batch, session_id, page_num, instruction, on_progress,
+            )
+            for result in batch_results:
+                if result.path == "programmatic" and result.success:
+                    programmatic_ran = True
+                    working_pdf_modified = True
+                elif result.path == "fallback_visual" and result.success:
+                    visual_ran = True
+                op_results.append(result)
+
+        # Execute remaining ops (style_change, visual_regenerate, low-conf text_replace)
+        for op_idx, op in remaining_ops:
             t_op = time.monotonic()
 
             if isinstance(op, (TextReplaceOp, StyleChangeOp)):
@@ -747,6 +771,7 @@ class Orchestrator:
                 editor.apply_text_replace,
                 session_id, page_num,
                 op.original_text, op.replacement_text, op.match_strategy,
+                op.context_before, op.context_after,
             )
 
             if result.success:
@@ -828,6 +853,83 @@ class Orchestrator:
                 detail=f"Style change failed: {result.error_message}",
                 error=result.error_message,
             )
+
+    # ------------------------------------------------------------------
+    # Batched text_replace execution
+    # ------------------------------------------------------------------
+
+    async def _execute_text_replace_batch(
+        self,
+        ops: list[tuple[int, TextReplaceOp]],
+        session_id: str,
+        page_num: int,
+        instruction: str,
+        on_progress: ProgressCallback,
+    ) -> list[OperationResult]:
+        """Execute multiple text_replace ops as a single batch."""
+        from app.services.pdf_editor import PdfEditor
+        editor = PdfEditor(session_manager=self.sessions)
+
+        descs = [f"'{op.original_text}' -> '{op.replacement_text}'" for _, op in ops]
+        await on_progress(
+            "programmatic",
+            f"Batch text replacement: {len(ops)} operations",
+            {"op_count": len(ops)},
+        )
+
+        batch_ops = [op for _, op in ops]
+        batch_results = await asyncio.to_thread(
+            editor.apply_text_replacements_batch,
+            session_id, page_num, batch_ops,
+        )
+
+        results: list[OperationResult] = []
+        for i, (op_idx, op) in enumerate(ops):
+            if i < len(batch_results):
+                br = batch_results[i]
+            else:
+                br = None
+
+            if br and br.success:
+                desc = descs[i]
+                await on_progress(
+                    "programmatic",
+                    f"Text replaced: {desc} ({br.time_ms}ms)",
+                    {"op_index": op_idx},
+                )
+                results.append(OperationResult(
+                    op_index=op_idx,
+                    op_type=OperationType.TEXT_REPLACE,
+                    success=True, time_ms=br.time_ms, path="programmatic",
+                    detail=f"Text replaced: {desc} ({br.characters_changed} chars changed)",
+                ))
+            elif br and br.escalate:
+                logger.warning(
+                    "Batch text_replace failed for op %d, escalating: %s",
+                    op_idx, br.error_message,
+                )
+                await on_progress(
+                    "generating",
+                    f"Text replacement failed ({br.error_message}), "
+                    f"falling back to AI visual edit",
+                    {"op_index": op_idx},
+                )
+                fallback = await self._visual_fallback_for_programmatic(
+                    op, op_idx, session_id, page_num, on_progress,
+                )
+                results.append(fallback)
+            else:
+                error_msg = br.error_message if br else "Batch processing error"
+                results.append(OperationResult(
+                    op_index=op_idx,
+                    op_type=OperationType.TEXT_REPLACE,
+                    success=False, time_ms=br.time_ms if br else 0,
+                    path="programmatic",
+                    detail=f"Text replace failed: {error_msg}",
+                    error=error_msg,
+                ))
+
+        return results
 
     # ------------------------------------------------------------------
     # Visual execution

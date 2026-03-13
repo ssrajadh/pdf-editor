@@ -29,6 +29,13 @@ correcting spelling.
    • original_text — MUST be an exact substring from the provided page text. \
 Copy it character-for-character. Do NOT paraphrase, summarize, or guess.
    • replacement_text — the new text.
+   • context_before — (optional but RECOMMENDED) ~10-20 chars of text immediately \
+before original_text, copied from the page text. Helps disambiguate when \
+original_text appears multiple times. Always include when the target text is \
+short (under 10 chars) or common (numbers, dates, single words).
+   • context_after — (optional but RECOMMENDED) ~10-20 chars of text immediately \
+after original_text. Same purpose as context_before. Provide at least one of \
+context_before or context_after when original_text is not unique on the page.
    • match_strategy:
      - "exact": original_text matches one unique location on the page.
      - "contains": match any text block containing the original_text.
@@ -103,8 +110,11 @@ treats confidence < 0.5 as "use the visual fallback instead."
 5. DUPLICATE TEXT: If original_text appears multiple times on the page, do ONE of:
    - Use "first_occurrence" match_strategy if the user's intent is clearly about \
 the first/most prominent one (e.g. a title).
-   - Create SEPARATE text_replace operations for each occurrence, each with enough \
-surrounding context in original_text to uniquely identify it.
+   - Provide context_before and/or context_after to disambiguate. This is the \
+PREFERRED approach — it lets the execution engine find the exact occurrence \
+without including context in the replacement text itself.
+   - Create SEPARATE text_replace operations for each occurrence, each with \
+context_before/context_after to uniquely identify it.
    - If ambiguous, ask via the reasoning field and default to visual_regenerate.
 
 6. HYBRID OPERATIONS: A single user instruction often decomposes into MULTIPLE \
@@ -170,9 +180,11 @@ Plan:
       "type": "text_replace",
       "original_text": "Q3",
       "replacement_text": "Q4",
+      "context_before": null,
+      "context_after": " 2025 Revenue Report",
       "match_strategy": "first_occurrence",
       "confidence": 0.95,
-      "reasoning": "Simple 2-char swap, same length, clearly refers to the quarter label in the title."
+      "reasoning": "Simple 2-char swap, same length, clearly refers to the quarter label in the title. Context_after provided since 'Q3' is short and could appear elsewhere."
     }
   ],
   "execution_order": [0],
@@ -272,7 +284,7 @@ Plan:
   "all_programmatic": false
 }
 
-── Example 6: Multiple text replacements ──
+── Example 6: Multiple text replacements with context disambiguation ──
 User instruction: "Update all instances of 2024 to 2025"
 Page text: "Annual Report 2024\\nFiscal Year 2024 Performance\\nCopyright 2024 Acme Corp\\nPublished: Dec 2024"
 Plan:
@@ -280,39 +292,47 @@ Plan:
   "operations": [
     {
       "type": "text_replace",
-      "original_text": "Annual Report 2024",
-      "replacement_text": "Annual Report 2025",
+      "original_text": "2024",
+      "replacement_text": "2025",
+      "context_before": "Annual Report ",
+      "context_after": null,
       "match_strategy": "exact",
       "confidence": 0.95,
-      "reasoning": "Same length swap in unique title context."
+      "reasoning": "Same length swap. Using context_before to disambiguate from other '2024' instances."
     },
     {
       "type": "text_replace",
-      "original_text": "Fiscal Year 2024",
-      "replacement_text": "Fiscal Year 2025",
+      "original_text": "2024",
+      "replacement_text": "2025",
+      "context_before": "Fiscal Year ",
+      "context_after": " Performance",
       "match_strategy": "exact",
       "confidence": 0.95,
-      "reasoning": "Same length swap with unique surrounding context."
+      "reasoning": "Same length swap with both context fields for reliable disambiguation."
     },
     {
       "type": "text_replace",
-      "original_text": "Copyright 2024",
-      "replacement_text": "Copyright 2025",
+      "original_text": "2024",
+      "replacement_text": "2025",
+      "context_before": "Copyright ",
+      "context_after": " Acme Corp",
       "match_strategy": "exact",
       "confidence": 0.95,
-      "reasoning": "Same length swap with unique surrounding context."
+      "reasoning": "Same length swap with context disambiguation."
     },
     {
       "type": "text_replace",
-      "original_text": "Dec 2024",
-      "replacement_text": "Dec 2025",
+      "original_text": "2024",
+      "replacement_text": "2025",
+      "context_before": "Dec ",
+      "context_after": null,
       "match_strategy": "exact",
       "confidence": 0.95,
-      "reasoning": "Same length swap with unique surrounding context."
+      "reasoning": "Same length swap. Context_before 'Dec ' uniquely identifies this instance."
     }
   ],
   "execution_order": [0, 1, 2, 3],
-  "summary": "Replace all four occurrences of '2024' with '2025', each with unique surrounding context for reliable matching.",
+  "summary": "Replace all four occurrences of '2024' with '2025', each disambiguated with surrounding context.",
   "all_programmatic": true
 }
 

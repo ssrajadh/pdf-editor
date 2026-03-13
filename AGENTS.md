@@ -30,15 +30,15 @@ pdf-editor/
 │   │   │   └── edit.py          # WebSocket edit endpoint (3-arg progress: stage, message, extra), history, revert
 │   │   ├── services/
 │   │   │   ├── orchestrator.py  # Orchestrator: PageContext, planner (plan_edit), execute pipeline, text layer handling
-│   │   │   ├── pdf_editor.py    # PdfEditor: PyMuPDF redact-and-overlay text replace + style change, font matching, bg detection
+│   │   │   ├── pdf_editor.py    # PdfEditor: PyMuPDF redact-and-overlay, batch replace, context disambiguation, font calibration, protected PDF check
 │   │   │   ├── edit_engine.py   # EditEngine: concurrency locks, delegates to Orchestrator
 │   │   │   ├── pdf_service.py   # pdftoppm rendering, pdfplumber text extraction, compound degradation prevention, export
 │   │   │   └── model_provider.py # Abstract ModelProvider, GeminiProvider (edit_image, analyze_image, plan_edit), ProviderFactory
 │   │   ├── prompts/
 │   │   │   └── orchestrator_plan.py # System + user prompt templates for the planning LLM
 │   │   ├── models/
-│   │   │   └── schemas.py       # Pydantic models: ExecutionPlan, TextReplaceOp, StyleChangeOp, VisualRegenerateOp,
-│   │   │                        #   OperationResult, ExecutionResult, TextReplaceResult, StyleChangeResult, FontInfo, etc.
+│   │   │   └── schemas.py       # Pydantic models: ExecutionPlan, TextReplaceOp (context_before/after), StyleChangeOp,
+│   │   │                        #   VisualRegenerateOp, OperationResult, ExecutionResult, TextReplaceResult, FontInfo, etc.
 │   │   └── storage/
 │   │       └── session.py       # SessionManager: CRUD, get_working_pdf_path (lazy copy), cleanup_old_sessions
 │   ├── tests/
@@ -49,7 +49,8 @@ pdf-editor/
 │   │   ├── test_model_provider.py     # Gemini API integration test
 │   │   ├── test_edit_ws.py            # WebSocket endpoint tests
 │   │   ├── test_orchestrator_prompt.py # Prompt & JSON parsing tests
-│   │   └── test_layout_awareness.py   # Layout analyzer + layout-aware planner tests
+│   │   ├── test_layout_awareness.py   # Layout analyzer + layout-aware planner tests
+│   │   └── test_edge_cases.py         # Edge cases: multi-match, batch, protected, colored bg, font calibration
 │   ├── requirements.txt
 │   └── pyproject.toml
 ├── frontend/
@@ -198,6 +199,11 @@ The WebSocket streams rich progress events:
 - **Working PDF strategy**: `original.pdf` stays pristine; `working.pdf` (lazy copy) accumulates programmatic edits; visual edits produce images only
 - **Compound degradation prevention**: visual model always sees a clean PDF-rendered image via `get_current_base_image()`, never a prior AI output — prevents quality loss over multiple edits
 - **PyMuPDF redact-and-overlay editing**: finds text via `page.search_for()`, redacts the original with a background-color-matched rectangle, then overlays replacement text with a style-matched standard font. Works reliably across all font types including CID (Type0) — no content stream manipulation needed
+- **Multi-match disambiguation**: `TextReplaceOp` includes optional `context_before`/`context_after` fields (~20 chars). When multiple matches exist, searches for the full contextual string to find the exact occurrence. Without context on ambiguous matches, escalates to visual with a clear error message.
+- **Batch text replacement**: `apply_text_replacements_batch()` opens the doc once, validates all ops, adds all redaction annotations, calls `apply_redactions()` once, inserts all replacement texts, and saves once. Orchestrator batches all text_replace ops on the same page automatically.
+- **Font size calibration**: measures rendered width of replacement text at detected size, scales proportionally to match original bounding box width, clamped to ±15% to avoid visually jarring changes
+- **Rect expansion**: redaction rect expanded by 1.5pt on each side to avoid clipping artifacts, with safety check against adjacent text bounding boxes
+- **Protected PDF detection**: checks `doc.permissions & PDF_PERM_MODIFY` even on auto-authenticated PDFs (empty user password), escalates cleanly
 - **Overflow rule**: replacement text width estimated via `fitz.get_text_length()` — if >115% of original bounding box width, escalates to visual
 - **Font matching**: maps original fonts to closest standard PDF base font (Helvetica/Times/Courier families) based on font name heuristics and bold/italic flags
 - **Background color detection**: samples corner pixels of a rendered clip around the text rect to match the fill color for redaction
@@ -274,6 +280,9 @@ cd backend
 # Layout awareness — unit tests (no API key) + planner tests (requires API key)
 .venv/bin/python -m tests.test_layout_awareness
 .venv/bin/python -m tests.test_layout_awareness --real  # includes real PDF tests
+
+# Edge cases — multi-match, batch, protected, colored bg, font calibration (no API key)
+.venv/bin/python -m tests.test_edge_cases
 
 # Gemini API integration
 .venv/bin/python -m tests.test_model_provider

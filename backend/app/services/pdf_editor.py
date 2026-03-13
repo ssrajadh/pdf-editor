@@ -1,39 +1,38 @@
 """Programmatic PDF text editing engine using PyMuPDF (fitz).
 
-Uses the redact-and-overlay technique instead of content stream manipulation:
+Uses the redact-and-overlay technique:
 1. Search for text and get its bounding box
 2. Redact (cover) the original text with a filled rect matching the background
 3. Insert replacement text at the same position with matched styling
 
-This works reliably across all PDF types including CID fonts.
+Handles edge cases: multi-match disambiguation via context, multi-line text,
+protected/encrypted PDFs, adjacent text artifacts, font size calibration,
+and batch replacements.
 """
 
 import logging
 import time
 from collections import Counter
+from dataclasses import dataclass
 
 import fitz  # PyMuPDF
 
-from app.models.schemas import StyleChangeResult, TextReplaceResult
+from app.models.schemas import StyleChangeResult, TextReplaceOp, TextReplaceResult
 from app.services import pdf_service
 from app.storage.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
 OVERFLOW_RATIO = 1.15
+RECT_EXPAND_PX = 1.5
+FONT_SIZE_CLAMP = 0.15
 
 
 def _match_font(original_font_name: str, flags: int) -> str:
-    """Map an arbitrary PDF font name to the closest standard PyMuPDF font.
-
-    Standard fonts available without embedding:
-      helv (Helvetica), hebo (Helvetica-Bold), heit (Helvetica-Oblique), hebi (Helvetica-BoldOblique)
-      tiro (Times-Roman), tibo (Times-Bold), tiit (Times-Italic), tibi (Times-BoldItalic)
-      cour (Courier), cobo (Courier-Bold), coit (Courier-Oblique), cobi (Courier-BoldOblique)
-    """
+    """Map an arbitrary PDF font name to the closest standard PyMuPDF font."""
     name = original_font_name.lower()
-    is_bold = bool(flags & (1 << 4))  # bit 4 = bold
-    is_italic = bool(flags & (1 << 1))  # bit 1 = italic
+    is_bold = bool(flags & (1 << 4))
+    is_italic = bool(flags & (1 << 1))
 
     if any(s in name for s in ("courier", "mono", "consol", "fixed")):
         if is_bold and is_italic:
@@ -66,19 +65,84 @@ def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
     return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
 
 
+def _calibrate_font_size(
+    replacement_text: str, fontname: str, target_width: float, base_size: float,
+) -> float:
+    """Adjust font size so replacement text width matches the original bounding box.
+
+    Measures rendered width at base_size, then scales proportionally.
+    Clamps adjustment to ±15% to avoid visually jarring size changes.
+    """
+    rendered_width = fitz.get_text_length(replacement_text, fontname=fontname, fontsize=base_size)
+    if rendered_width <= 0 or target_width <= 0:
+        return base_size
+
+    ratio = target_width / rendered_width
+    if abs(ratio - 1.0) < 0.03:
+        return base_size
+
+    adjusted = base_size * ratio
+    min_size = base_size * (1.0 - FONT_SIZE_CLAMP)
+    max_size = base_size * (1.0 + FONT_SIZE_CLAMP)
+    return max(min_size, min(adjusted, max_size))
+
+
+def _expand_rect_safe(
+    rect: fitz.Rect, page: fitz.Page, target_text: str,
+) -> fitz.Rect:
+    """Expand a redaction rect by a small margin to avoid clipping artifacts,
+    but don't overlap with adjacent text bounding boxes."""
+    expanded = fitz.Rect(
+        rect.x0 - RECT_EXPAND_PX, rect.y0 - RECT_EXPAND_PX,
+        rect.x1 + RECT_EXPAND_PX, rect.y1 + RECT_EXPAND_PX,
+    )
+    expanded &= page.rect
+
+    blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                span_text = span.get("text", "").strip()
+                if not span_text or span_text in target_text or target_text in span_text:
+                    continue
+                span_rect = fitz.Rect(span["bbox"])
+                if expanded.intersects(span_rect) and not rect.intersects(span_rect):
+                    expanded = rect
+                    return expanded
+
+    return expanded
+
+
+@dataclass
+class _PreparedReplacement:
+    """Pre-validated replacement ready for batch application."""
+    op_index: int
+    rect: fitz.Rect
+    expanded_rect: fitz.Rect
+    replacement_text: str
+    fontname: str
+    fontsize: float
+    color: tuple[float, float, float]
+    bg_color: tuple[float, float, float]
+    origin: tuple[float, float]
+    original_text: str
+
+
 class PdfEditor:
     """Edits text in PDFs using the redact-and-overlay technique.
 
-    Instead of parsing content stream operators, we:
-    1. Search for text and get its bounding box
-    2. Redact (cover) the original text with a filled rect
-    3. Insert replacement text at the same position with matched styling
-
-    This works reliably across all PDF types including CID fonts.
+    Supports single replacements and batch replacements (multiple ops on
+    the same page applied atomically with a single apply_redactions() call).
     """
 
     def __init__(self, session_manager: SessionManager):
         self.sessions = session_manager
+
+    # ------------------------------------------------------------------
+    # Single text replacement (backward-compatible API)
+    # ------------------------------------------------------------------
 
     def apply_text_replace(
         self,
@@ -87,6 +151,8 @@ class PdfEditor:
         original_text: str,
         replacement_text: str,
         match_strategy: str = "exact",
+        context_before: str | None = None,
+        context_after: str | None = None,
     ) -> TextReplaceResult:
         """Replace text in the PDF using redact-and-overlay."""
         t0 = time.monotonic()
@@ -105,6 +171,16 @@ class PdfEditor:
             )
 
         try:
+            # Protected PDF check
+            check = self._check_pdf_access(doc)
+            if check:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return TextReplaceResult(
+                    success=False, original_text=original_text,
+                    new_text=replacement_text, escalate=True,
+                    error_message=check, time_ms=elapsed, characters_changed=0,
+                )
+
             if page_num < 1 or page_num > len(doc):
                 elapsed = int((time.monotonic() - t0) * 1000)
                 return TextReplaceResult(
@@ -116,26 +192,23 @@ class PdfEditor:
 
             page = doc[page_num - 1]
 
-            # 1. Find text occurrences
-            rects = page.search_for(original_text)
+            # Find target rect with disambiguation
+            target_rect = self._find_target_rect(
+                page, original_text, match_strategy,
+                context_before, context_after,
+            )
 
-            if not rects:
+            if isinstance(target_rect, str):
                 elapsed = int((time.monotonic() - t0) * 1000)
-                logger.warning(
-                    "Text not found via search_for: %r on page %d",
-                    original_text, page_num,
-                )
                 return TextReplaceResult(
                     success=False, original_text=original_text,
                     new_text=replacement_text, escalate=True,
-                    error_message=f"Text '{original_text}' not found on page {page_num}",
-                    time_ms=elapsed, characters_changed=0,
+                    error_message=target_rect, time_ms=elapsed,
+                    characters_changed=0,
                 )
 
-            if match_strategy == "first_occurrence":
-                rects = rects[:1]
+            rects = [target_rect] if not isinstance(target_rect, list) else target_rect
 
-            # 2. For each match, get text properties, check fit, redact, and overlay
             for rect in rects:
                 props = self._get_text_properties(page, rect, original_text)
                 matched_font = _match_font(
@@ -144,7 +217,7 @@ class PdfEditor:
                 )
                 font_size = props["size"] if props else 11.0
 
-                # 3. Check if replacement fits
+                # Overflow check
                 replacement_width = fitz.get_text_length(
                     replacement_text, fontname=matched_font, fontsize=font_size,
                 )
@@ -167,15 +240,18 @@ class PdfEditor:
                         time_ms=elapsed, characters_changed=0,
                     )
 
-                # 4. Detect background color
-                bg_color = self._detect_background_color(page, rect)
+                # Font size calibration
+                calibrated_size = _calibrate_font_size(
+                    replacement_text, matched_font, original_width, font_size,
+                )
 
-                # 5. Redact original text
-                annot = page.add_redact_annot(rect)
+                bg_color = self._detect_background_color(page, rect)
+                expanded = _expand_rect_safe(page=page, rect=rect, target_text=original_text)
+
+                annot = page.add_redact_annot(expanded)
                 annot.set_colors(fill=bg_color)
                 page.apply_redactions()
 
-                # 6. Insert replacement text
                 color_rgb = _color_int_to_rgb(props["color"]) if props else (0, 0, 0)
 
                 if props and props.get("origin"):
@@ -187,7 +263,7 @@ class PdfEditor:
                     text_point,
                     replacement_text,
                     fontname=matched_font,
-                    fontsize=font_size,
+                    fontsize=calibrated_size,
                     color=color_rgb,
                 )
                 if rc < 0:
@@ -200,28 +276,15 @@ class PdfEditor:
                     )
 
                 logger.info(
-                    "Redact-and-overlay: %r -> %r at rect=%s, font=%s/%.1f, bg=%s",
+                    "Redact-and-overlay: %r -> %r at rect=%s, font=%s/%.1f(cal:%.1f), bg=%s",
                     original_text, replacement_text, rect,
-                    matched_font, font_size, bg_color,
+                    matched_font, font_size, calibrated_size, bg_color,
                 )
 
-            # 7. Save
             doc.save(str(working_path), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
             doc.close()
 
-            # 8. Re-render the page
-            session_path = self.sessions.get_session_path(session_id)
-            metadata = self.sessions.get_metadata(session_id)
-            current_version = int(
-                metadata.get("current_page_versions", {}).get(str(page_num), 0)
-            )
-            new_version = current_version + 1
-            pdf_service.render_page(
-                working_path, page_num,
-                session_path / "pages", version=new_version,
-            )
-            metadata["current_page_versions"][str(page_num)] = new_version
-            self.sessions.update_metadata(session_id, metadata)
+            self._bump_version_and_render(session_id, page_num, working_path)
 
             elapsed = int((time.monotonic() - t0) * 1000)
             return TextReplaceResult(
@@ -245,6 +308,196 @@ class PdfEditor:
             if not doc.is_closed:
                 doc.close()
 
+    # ------------------------------------------------------------------
+    # Batch text replacement
+    # ------------------------------------------------------------------
+
+    def apply_text_replacements_batch(
+        self,
+        session_id: str,
+        page_num: int,
+        operations: list[TextReplaceOp],
+    ) -> list[TextReplaceResult]:
+        """Apply multiple text replacements on the same page atomically.
+
+        Opens the doc once, collects all redactions, applies them in a single
+        apply_redactions() call, then inserts all replacement text and saves once.
+        """
+        t0 = time.monotonic()
+        working_path = self.sessions.get_working_pdf_path(session_id)
+        results: list[TextReplaceResult] = []
+
+        try:
+            doc = fitz.open(str(working_path))
+        except Exception as e:
+            return [TextReplaceResult(
+                success=False, original_text=op.original_text,
+                new_text=op.replacement_text, escalate=True,
+                error_message=f"Failed to open PDF: {e}",
+                time_ms=0, characters_changed=0,
+            ) for op in operations]
+
+        try:
+            check = self._check_pdf_access(doc)
+            if check:
+                return [TextReplaceResult(
+                    success=False, original_text=op.original_text,
+                    new_text=op.replacement_text, escalate=True,
+                    error_message=check, time_ms=0, characters_changed=0,
+                ) for op in operations]
+
+            page = doc[page_num - 1]
+
+            # Phase 1: Validate all operations and collect prepared replacements
+            prepared: list[_PreparedReplacement] = []
+            for i, op in enumerate(operations):
+                t_op = time.monotonic()
+
+                target_rect = self._find_target_rect(
+                    page, op.original_text, op.match_strategy,
+                    op.context_before, op.context_after,
+                )
+
+                if isinstance(target_rect, str):
+                    elapsed_op = int((time.monotonic() - t_op) * 1000)
+                    results.append(TextReplaceResult(
+                        success=False, original_text=op.original_text,
+                        new_text=op.replacement_text, escalate=True,
+                        error_message=target_rect, time_ms=elapsed_op,
+                        characters_changed=0,
+                    ))
+                    continue
+
+                rect = target_rect if not isinstance(target_rect, list) else target_rect[0]
+                props = self._get_text_properties(page, rect, op.original_text)
+                matched_font = _match_font(
+                    props["font"] if props else "Helvetica",
+                    props["flags"] if props else 0,
+                )
+                font_size = props["size"] if props else 11.0
+
+                replacement_width = fitz.get_text_length(
+                    op.replacement_text, fontname=matched_font, fontsize=font_size,
+                )
+                if rect.width > 0 and replacement_width > rect.width * OVERFLOW_RATIO:
+                    elapsed_op = int((time.monotonic() - t_op) * 1000)
+                    results.append(TextReplaceResult(
+                        success=False, original_text=op.original_text,
+                        new_text=op.replacement_text, escalate=True,
+                        error_message=(
+                            f"Replacement text too wide: {replacement_width:.0f}px "
+                            f"vs {rect.width:.0f}px available"
+                        ),
+                        time_ms=elapsed_op, characters_changed=0,
+                    ))
+                    continue
+
+                calibrated_size = _calibrate_font_size(
+                    op.replacement_text, matched_font, rect.width, font_size,
+                )
+                bg_color = self._detect_background_color(page, rect)
+                expanded = _expand_rect_safe(page=page, rect=rect, target_text=op.original_text)
+                color_rgb = _color_int_to_rgb(props["color"]) if props else (0, 0, 0)
+
+                if props and props.get("origin"):
+                    origin = (props["origin"][0], props["origin"][1])
+                else:
+                    origin = (rect.x0, rect.y1 - rect.height * 0.15)
+
+                prepared.append(_PreparedReplacement(
+                    op_index=i,
+                    rect=rect,
+                    expanded_rect=expanded,
+                    replacement_text=op.replacement_text,
+                    fontname=matched_font,
+                    fontsize=calibrated_size,
+                    color=color_rgb,
+                    bg_color=bg_color,
+                    origin=origin,
+                    original_text=op.original_text,
+                ))
+
+            if not prepared:
+                doc.close()
+                return results
+
+            # Phase 2: Add all redaction annotations
+            for prep in prepared:
+                annot = page.add_redact_annot(prep.expanded_rect)
+                annot.set_colors(fill=prep.bg_color)
+
+            # Phase 3: Single apply_redactions() call
+            page.apply_redactions()
+
+            # Phase 4: Insert all replacement texts
+            any_insert_failed = False
+            for prep in prepared:
+                text_point = fitz.Point(prep.origin[0], prep.origin[1])
+                rc = page.insert_text(
+                    text_point,
+                    prep.replacement_text,
+                    fontname=prep.fontname,
+                    fontsize=prep.fontsize,
+                    color=prep.color,
+                )
+
+                op = operations[prep.op_index]
+                elapsed_op = int((time.monotonic() - t0) * 1000)
+
+                if rc < 0:
+                    any_insert_failed = True
+                    results.append(TextReplaceResult(
+                        success=False, original_text=prep.original_text,
+                        new_text=prep.replacement_text, escalate=True,
+                        error_message="Text insertion failed — overflow",
+                        time_ms=elapsed_op, characters_changed=0,
+                    ))
+                else:
+                    results.append(TextReplaceResult(
+                        success=True,
+                        original_text=prep.original_text,
+                        new_text=prep.replacement_text,
+                        time_ms=elapsed_op,
+                        characters_changed=abs(
+                            len(prep.replacement_text) - len(prep.original_text)
+                        ),
+                    ))
+                    logger.info(
+                        "Batch redact-and-overlay [%d]: %r -> %r at rect=%s, "
+                        "font=%s/%.1f, bg=%s",
+                        prep.op_index, prep.original_text, prep.replacement_text,
+                        prep.rect, prep.fontname, prep.fontsize, prep.bg_color,
+                    )
+
+            # Phase 5: Save once
+            doc.save(str(working_path), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+            doc.close()
+
+            # Phase 6: Re-render once
+            if any(r.success for r in results):
+                self._bump_version_and_render(session_id, page_num, working_path)
+
+            return results
+
+        except Exception as e:
+            logger.error("Batch text replacement failed: %s", e, exc_info=True)
+            elapsed = int((time.monotonic() - t0) * 1000)
+            remaining = len(operations) - len(results)
+            for _ in range(remaining):
+                results.append(TextReplaceResult(
+                    success=False, original_text="", new_text="",
+                    escalate=True, error_message=f"Batch error: {e}",
+                    time_ms=elapsed, characters_changed=0,
+                ))
+            return results
+        finally:
+            if not doc.is_closed:
+                doc.close()
+
+    # ------------------------------------------------------------------
+    # Style change
+    # ------------------------------------------------------------------
+
     def apply_style_change(
         self,
         session_id: str,
@@ -252,11 +505,7 @@ class PdfEditor:
         target_text: str,
         changes: dict,
     ) -> StyleChangeResult:
-        """Modify visual properties of text using redact-and-overlay.
-
-        Same technique: find the text, redact it, re-insert with modified properties.
-        Supports: color, font_size, bold, italic.
-        """
+        """Modify visual properties of text using redact-and-overlay."""
         t0 = time.monotonic()
         working_path = self.sessions.get_working_pdf_path(session_id)
 
@@ -271,6 +520,15 @@ class PdfEditor:
             )
 
         try:
+            check = self._check_pdf_access(doc)
+            if check:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return StyleChangeResult(
+                    success=False, target_text=target_text,
+                    changes_applied={}, escalate=True,
+                    error_message=check, time_ms=elapsed,
+                )
+
             page = doc[page_num - 1]
             rects = page.search_for(target_text)
 
@@ -319,7 +577,6 @@ class PdfEditor:
                 new_color = _hex_to_rgb(changes["color"])
                 applied["color"] = changes["color"]
 
-            # Check if size change would overflow
             new_width = fitz.get_text_length(target_text, fontname=new_font, fontsize=new_size)
             if rect.width > 0 and new_width > rect.width * OVERFLOW_RATIO:
                 elapsed = int((time.monotonic() - t0) * 1000)
@@ -330,9 +587,9 @@ class PdfEditor:
                     time_ms=elapsed,
                 )
 
-            # Redact and re-insert
             bg_color = self._detect_background_color(page, rect)
-            annot = page.add_redact_annot(rect)
+            expanded = _expand_rect_safe(page=page, rect=rect, target_text=target_text)
+            annot = page.add_redact_annot(expanded)
             annot.set_colors(fill=bg_color)
             page.apply_redactions()
 
@@ -347,19 +604,7 @@ class PdfEditor:
             doc.save(str(working_path), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
             doc.close()
 
-            # Re-render
-            session_path = self.sessions.get_session_path(session_id)
-            metadata = self.sessions.get_metadata(session_id)
-            current_version = int(
-                metadata.get("current_page_versions", {}).get(str(page_num), 0)
-            )
-            new_version = current_version + 1
-            pdf_service.render_page(
-                working_path, page_num,
-                session_path / "pages", version=new_version,
-            )
-            metadata["current_page_versions"][str(page_num)] = new_version
-            self.sessions.update_metadata(session_id, metadata)
+            self._bump_version_and_render(session_id, page_num, working_path)
 
             elapsed = int((time.monotonic() - t0) * 1000)
             return StyleChangeResult(
@@ -382,6 +627,130 @@ class PdfEditor:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _check_pdf_access(doc: fitz.Document) -> str | None:
+        """Check if the PDF allows modifications. Returns error message or None."""
+        if doc.is_encrypted or doc.needs_pass:
+            if not doc.authenticate(""):
+                return "PDF is password-protected and cannot be edited programmatically"
+
+        # Check permissions even if auto-authenticated (user-pw="" still
+        # enforces owner-password restrictions on modification)
+        perms = doc.permissions
+        if perms is not None and perms != 0:
+            if not (perms & fitz.PDF_PERM_MODIFY):
+                return "PDF restricts modifications — cannot edit programmatically"
+        return None
+
+    @staticmethod
+    def _find_target_rect(
+        page: fitz.Page,
+        original_text: str,
+        match_strategy: str,
+        context_before: str | None = None,
+        context_after: str | None = None,
+    ) -> fitz.Rect | list[fitz.Rect] | str:
+        """Find the bounding rect(s) for target text with disambiguation.
+
+        Returns:
+          - fitz.Rect for a single match
+          - list[fitz.Rect] if match_strategy is not first_occurrence and multiple
+            unambiguous matches exist
+          - str error message on failure
+        """
+        rects = page.search_for(original_text)
+
+        if not rects:
+            logger.warning("Text not found via search_for: %r", original_text)
+            return f"Text '{original_text}' not found on page"
+
+        # Multi-line detection: check if search returned adjacent rects for one hit
+        # by using quads. If we get quads that span multiple lines for one hit, it's multi-line.
+        quads = page.search_for(original_text, quads=True)
+        if quads and len(quads) > len(rects):
+            # Multi-line text wrapping detected
+            logger.info(
+                "Multi-line text detected: %d quads for %r (rects=%d)",
+                len(quads), original_text, len(rects),
+            )
+
+        if len(rects) == 1 or match_strategy == "first_occurrence":
+            return rects[0]
+
+        # Multiple matches found — try context disambiguation
+        if context_before or context_after:
+            full_search = (context_before or "") + original_text + (context_after or "")
+            context_rects = page.search_for(full_search)
+
+            if len(context_rects) == 1:
+                # Compute sub-rect for just the original_text portion
+                full_rect = context_rects[0]
+
+                prefix_len = len(context_before) if context_before else 0
+                if prefix_len > 0:
+                    prefix_text = full_search[:prefix_len]
+                    props = None
+                    blocks = page.get_text("dict", clip=full_rect,
+                                           flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+                    for block in blocks:
+                        for line in block.get("lines", []):
+                            for span in line.get("spans", []):
+                                if original_text in span.get("text", ""):
+                                    props = span
+                                    break
+                            if props:
+                                break
+                        if props:
+                            break
+
+                    if props:
+                        fontname = _match_font(props["font"], props["flags"])
+                        prefix_width = fitz.get_text_length(
+                            prefix_text, fontname=fontname, fontsize=props["size"],
+                        )
+                        target_width = fitz.get_text_length(
+                            original_text, fontname=fontname, fontsize=props["size"],
+                        )
+                        sub_rect = fitz.Rect(
+                            full_rect.x0 + prefix_width,
+                            full_rect.y0,
+                            full_rect.x0 + prefix_width + target_width,
+                            full_rect.y1,
+                        )
+                        logger.info(
+                            "Context disambiguation: %r found via context %r...%r, "
+                            "sub_rect=%s",
+                            original_text, context_before, context_after, sub_rect,
+                        )
+                        return sub_rect
+
+                # Fallback: just use the rect from context search directly
+                # and search within it for the original text
+                inner_rects = page.search_for(original_text, clip=context_rects[0])
+                if inner_rects:
+                    return inner_rects[0]
+                return context_rects[0]
+
+            elif len(context_rects) > 1:
+                logger.warning(
+                    "Context disambiguation still ambiguous: %d matches for %r",
+                    len(context_rects), full_search,
+                )
+            else:
+                logger.warning(
+                    "Context search found nothing for %r", full_search,
+                )
+
+        # No context or context didn't help — escalate
+        if match_strategy == "exact" and len(rects) > 1:
+            return (
+                f"Ambiguous: '{original_text}' found {len(rects)} times on page. "
+                f"Provide context_before/context_after for disambiguation or "
+                f"use 'first_occurrence' match_strategy."
+            )
+
+        return rects[0]
 
     @staticmethod
     def _get_text_properties(
@@ -407,11 +776,7 @@ class PdfEditor:
     def _detect_background_color(
         page: fitz.Page, rect: fitz.Rect,
     ) -> tuple[float, float, float]:
-        """Sample background color around a text rect.
-
-        Renders a small clip and samples corner pixels, which should be
-        background rather than text.
-        """
+        """Sample background color around a text rect by rendering corner pixels."""
         pad = 2
         clip = fitz.Rect(
             rect.x0 - pad, rect.y0 - pad,
@@ -430,3 +795,18 @@ class PdfEditor:
             return tuple(c / 255.0 for c in most_common)
         except Exception:
             return (1.0, 1.0, 1.0)
+
+    def _bump_version_and_render(self, session_id: str, page_num: int, working_path) -> None:
+        """Increment page version and re-render from working PDF."""
+        session_path = self.sessions.get_session_path(session_id)
+        metadata = self.sessions.get_metadata(session_id)
+        current_version = int(
+            metadata.get("current_page_versions", {}).get(str(page_num), 0)
+        )
+        new_version = current_version + 1
+        pdf_service.render_page(
+            working_path, page_num,
+            session_path / "pages", version=new_version,
+        )
+        metadata["current_page_versions"][str(page_num)] = new_version
+        self.sessions.update_metadata(session_id, metadata)

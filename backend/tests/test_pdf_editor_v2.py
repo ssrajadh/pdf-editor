@@ -364,6 +364,7 @@ def test_real_resume(mgr: SessionManager, editor: PdfEditor):
             session_id, 1,
             "SOFTWARE ENGINEER",
             "LEAD ENGINEER",
+            match_strategy="first_occurrence",
         )
         print(f"  Job title replace: success={result2.success}, time={result2.time_ms}ms")
         record("Resume: job title replace", result2.success,
