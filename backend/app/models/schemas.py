@@ -176,6 +176,10 @@ class ExecutionPlan(BaseModel):
     all_programmatic: bool = Field(
         description="True if no visual_regenerate ops (fast path)"
     )
+    page_analysis: str | None = Field(
+        default=None,
+        description="Page layout analysis summary (complexity, columns, fonts)",
+    )
 
 
 # ---------------------------------------------------------------------------

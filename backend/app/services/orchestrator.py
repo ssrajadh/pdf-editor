@@ -448,6 +448,15 @@ class Orchestrator:
 
         plan = await self._parse_with_retry(raw, instruction)
 
+        parts = [f"{ctx.layout_complexity} layout"]
+        if ctx.column_count > 1:
+            parts.append(f"{ctx.column_count} columns")
+        if ctx.has_cid_fonts:
+            parts.append("CID fonts detected")
+        if ctx.text_density:
+            parts.append(f"{ctx.text_density:.0%} text density")
+        plan.page_analysis = "Page analysis: " + ", ".join(parts)
+
         op_types = [op.type for op in plan.operations]
         prog_count = sum(1 for t in op_types if t != "visual_regenerate")
         vis_count = sum(1 for t in op_types if t == "visual_regenerate")

@@ -2,7 +2,7 @@
 
 AI-powered PDF editor with a chat-based editing interface. Upload a PDF, describe changes in natural language, and watch the AI edit your pages in real time.
 
-The system uses a two-tier editing architecture: an AI planner decomposes each instruction into a mix of **programmatic** operations (direct PDF structure edits via pikepdf, ~100ms) and **visual** operations (AI image regeneration via Google Gemini). Text replacements happen instantly in the PDF structure; layout changes, chart edits, and complex visual modifications go through the image model.
+The system uses a two-tier editing architecture: an AI planner decomposes each instruction into a mix of **programmatic** operations (PyMuPDF redact-and-overlay, ~10-100ms) and **visual** operations (AI image regeneration via Google Gemini). Text replacements happen instantly in the PDF structure; layout changes, chart edits, and complex visual modifications go through the image model.
 
 ## Quick Start
 
@@ -39,9 +39,9 @@ docker compose -f docker/docker-compose.yml up --build
 │  │            Orchestrator                     │             │
 │  │  ┌───────────┐  ┌───────────┐  ┌─────────┐ │             │
 │  │  │ Planner   │  │PdfEditor  │  │ Visual  │ │             │
-│  │  │(Gemini    │  │(pikepdf   │  │ (Gemini │ │             │
-│  │  │ 2.5 Flash)│  │ content   │  │ Image)  │ │             │
-│  │  │           │  │ streams)  │  │         │ │             │
+│  │  │(Gemini    │  │(PyMuPDF   │  │ (Gemini │ │             │
+│  │  │ 2.5 Flash)│  │ redact &  │  │ Image)  │ │             │
+│  │  │           │  │ overlay)  │  │         │ │             │
 │  │  └───────────┘  └───────────┘  └─────────┘ │             │
 │  └─────────────────────────────────────────────┘             │
 │  ┌────────────────────┐  ┌──────────────────┐               │
@@ -56,7 +56,7 @@ docker compose -f docker/docker-compose.yml up --build
 1. **User sends instruction** via WebSocket ("Change Q3 to Q4 and make the background blue")
 2. **Planner** (Gemini 2.5 Flash) analyzes the page text, visual elements, and instruction → produces an `ExecutionPlan` with typed operations
 3. **Orchestrator** executes operations in order:
-   - `text_replace` / `style_change` → **PdfEditor** modifies the PDF content stream directly (~100ms)
+   - `text_replace` / `style_change` → **PdfEditor** redacts and overlays via PyMuPDF (~10-100ms)
    - `visual_regenerate` → **Gemini Image** regenerates the page visually (~5-10s)
 4. **Compound degradation prevention**: visual model always receives a PDF-rendered base image (from `working.pdf` or `original.pdf`), never a previously AI-generated one
 5. **Text layer handling**: programmatic edits produce perfect text layers; visual-only edits mark the layer as stale
@@ -98,8 +98,8 @@ Frontend runs at http://localhost:5173 with Vite proxying `/api` to the backend.
 
 ## Key Features
 
-- **Two-tier editing** — text replacements execute programmatically in ~100ms; visual changes use AI image generation
-- **AI planner** — decomposes natural language instructions into optimal operation mixes (programmatic + visual)
+- **Two-tier editing** — text replacements execute programmatically in ~10-100ms (PyMuPDF redact-and-overlay); visual changes use AI image generation
+- **Layout-aware AI planner** — analyzes page complexity, fonts, columns, and density to route each operation optimally
 - **Chat-based editing** — describe changes in natural language
 - **Real-time progress** — WebSocket streams edit stages with plan details and per-operation progress
 - **Before/After toggle** — compare original and edited versions side by side
@@ -114,48 +114,63 @@ Frontend runs at http://localhost:5173 with Vite proxying `/api` to the backend.
 ```bash
 cd backend
 
-# Programmatic PDF editor tests (9 tests, no API key)
-.venv/bin/python -m tests.test_pdf_editor
+# PyMuPDF editor unit tests — 22 tests, no API key
+.venv/bin/python -m tests.test_pdf_editor_v2
 
-# Full end-to-end orchestrator tests (requires API key)
-# Includes: text replace, multi-replace, overflow escalation, sequential edits, plan preview
+# Edge-case hardening tests — 28 tests, no API key
+# (multi-match, batch replace, protected PDFs, font calibration, rect expansion)
+.venv/bin/python -m tests.test_edge_cases
+
+# Layout-aware planner tests — no API key for offline, some need API key
+.venv/bin/python -m tests.test_layout_awareness
+
+# End-to-end phase 2.5 — multi-document validation matrix (requires API key)
+# Tests 4 documents × multiple edits, prints summary table with benchmarks
+.venv/bin/python -m tests.test_e2e_phase2_5 --all
+
+# Orchestrator E2E (requires API key)
 .venv/bin/python -m tests.test_e2e_orchestrator --all
-
-# Test with a real PDF (CID font detection, visual routing)
-TEST_PDF_PATH=../your-resume.pdf .venv/bin/python -m tests.test_e2e_orchestrator --all --real
 
 # Manual API tests against a running server (requires backend running on :8000)
 TEST_PDF_PATH=../your-resume.pdf .venv/bin/python -m tests.test_manual_api
-
-# Orchestrator E2E (requires API key, 3 tests)
-.venv/bin/python -m tests.test_orchestrator_e2e
-
-# Full pipeline test — programmatic + visual + hybrid (requires API key, 3 tests)
-.venv/bin/python -m tests.test_pipeline_e2e
-
-# Gemini API integration test
-.venv/bin/python -m tests.test_model_provider
 ```
 
 ## Performance
 
-Benchmarks recorded on Gemini 2.5 Flash (planning) + Gemini 2.5 Flash Image (visual), measured via `test_e2e_orchestrator`:
+Benchmarks from `test_e2e_phase2_5 --all` (Gemini 2.5 Flash planning + Gemini 2.5 Flash Image visual):
 
-| Operation | Time | Notes |
-|-----------|------|-------|
-| Plan preview (simple text replace) | ~10-12s | Dominated by Gemini planning API latency |
-| Pure text replace (Q3→Q4, 4 ops) | ~11s total | ~9s planning + ~500ms per programmatic op |
-| Multi-text replace (7 ops) | ~11s total | Planning + ~200ms per op (sequential) |
-| Real resume edit (CID fonts) | ~6s total | ~5s planning + ~636ms programmatic (PyMuPDF) |
-| Visual edit (layout/chart change) | ~28-35s | ~14s planning + ~13-20s Gemini image generation |
-| Programmatic edit only (no planning) | ~500-600ms | PyMuPDF redact-and-overlay |
+| Document | Edit | Path | Time |
+|----------|------|------|------|
+| simple_report | 2024 → 2025 (5 ops, batch) | programmatic | 46ms edit, ~7s total |
+| simple_report | Report → Analysis | visual (overflow risk) | ~20s total |
+| simple_report | Add blue border | visual | ~14s total |
+| presentation_slide | Q3 → Q4 | programmatic | 10ms edit, ~3s total |
+| presentation_slide | Chart placeholder → bar chart | visual | ~16s total |
+| resume (CID fonts) | 2024 → 2025 (2 ops) | programmatic | 105ms edit, ~7s total |
+| resume (CID fonts) | Software → Hardware (4 ops) | mixed (3 prog + 1 fallback) | ~26s total |
+| resume (CID fonts) | GPA → long text | visual (overflow) | ~19s total |
+| resume (CID fonts) | Darken header background | visual | ~17s total |
+| colored_header | Project Alpha → Project Beta | mixed (1 prog + 1 fallback) | ~12s total |
+| colored_header | 2024 → 2025 (2 ops) | programmatic | 30ms edit, ~4s total |
+
+**Unit test benchmarks** (no API key, PyMuPDF only):
+
+| Operation | Time |
+|-----------|------|
+| Single text replace (simple font) | ~120ms |
+| Batch replace (3 ops, single page) | ~116ms |
+| Resume name swap (CID fonts) | ~600ms |
+| Multi-match with context disambiguation | ~140ms |
 
 **Key observations:**
-- Planning LLM latency (~9-14s) dominates all operations; actual programmatic edits are ~500ms
-- PyMuPDF redact-and-overlay handles all font types including CID (Type0) — no CID escalation needed
-- Overflow detection works: replacements exceeding 115% of bounding box width escalate to visual
-- Compound degradation prevention verified: visual base images always come from PDF render, never prior AI output
-- Sequential edits accumulate correctly in working.pdf; original.pdf stays untouched
+- Planning LLM latency (~3-7s) dominates total time; actual programmatic edits are 10-105ms
+- PyMuPDF redact-and-overlay handles all font types including CID (Type0) — no escalation needed
+- Batch text_replace ops execute atomically (one open/save cycle) for consistency
+- Multi-match disambiguation uses `context_before`/`context_after`; ambiguous cases escalate cleanly
+- Font size calibration ensures replacement text matches original bounding box width (±15% clamp)
+- Overflow detection escalates replacements exceeding bounding box width to visual
+- Protected PDFs (restricted modification permissions) produce clear error messages
+- Compound degradation prevention: visual base images always rendered from PDF, never from prior AI output
 
 ## License
 

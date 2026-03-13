@@ -275,6 +275,22 @@ function PlanPreviewCard({
                       {Math.round(op.confidence * 100)}%
                     </span>
                   </div>
+                  {op.type === "text_replace" && op.original_text && (
+                    <div className="text-[10px] text-gray-500 ml-6 mt-0.5 space-y-0.5">
+                      <div>
+                        <span className="font-mono bg-red-50 text-red-600 px-1 rounded">{op.original_text}</span>
+                        {" → "}
+                        <span className="font-mono bg-green-50 text-green-600 px-1 rounded">{op.replacement_text}</span>
+                      </div>
+                      {(op.context_before || op.context_after) && (
+                        <div className="text-gray-400">
+                          context: {op.context_before && <span>…{op.context_before}</span>}
+                          <span className="font-medium">[target]</span>
+                          {op.context_after && <span>{op.context_after}…</span>}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="text-[10px] text-gray-400 ml-6 mt-0.5">
                     {op.reasoning}
                   </div>
@@ -283,8 +299,11 @@ function PlanPreviewCard({
             })}
           </div>
 
-          <div className="px-3 py-2 border-t border-gray-100 text-[11px] text-gray-500">
-            Order: {plan.execution_order.map((i) => `#${i + 1}`).join(" → ")}
+          <div className="px-3 py-2 border-t border-gray-100 text-[11px] text-gray-500 space-y-1">
+            <div>Order: {plan.execution_order.map((i) => `#${i + 1}`).join(" → ")}</div>
+            {plan.page_analysis && (
+              <div className="text-gray-400 italic">{plan.page_analysis}</div>
+            )}
           </div>
         </div>
 

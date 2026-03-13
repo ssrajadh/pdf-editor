@@ -16,6 +16,8 @@ export interface PlanOperation {
   reasoning: string;
   original_text?: string;
   replacement_text?: string;
+  context_before?: string | null;
+  context_after?: string | null;
   match_strategy?: string;
   target_text?: string;
   changes?: Record<string, unknown>;
@@ -28,6 +30,7 @@ export interface ExecutionPlan {
   execution_order: number[];
   summary: string;
   all_programmatic: boolean;
+  page_analysis?: string;
 }
 
 export interface OperationResult {

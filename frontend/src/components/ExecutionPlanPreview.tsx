@@ -39,6 +39,14 @@ function OpDetail({ op, idx }: { op: PlanOperation; idx: number }) {
             <span className="text-gray-400">to:</span>{" "}
             <span className="font-mono bg-green-50 text-green-700 px-1 rounded">{op.replacement_text}</span>
           </div>
+          {(op.context_before || op.context_after) && (
+            <div className="text-[10px] text-gray-400 mt-0.5">
+              context:{" "}
+              {op.context_before && <span>…{op.context_before}</span>}
+              <span className="font-medium text-gray-500">[target]</span>
+              {op.context_after && <span>{op.context_after}…</span>}
+            </div>
+          )}
         </div>
       )}
 

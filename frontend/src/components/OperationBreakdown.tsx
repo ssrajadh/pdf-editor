@@ -24,6 +24,7 @@ const PATH_CONFIG: Record<string, { icon: string; badge: string; badgeClass: str
 
 function OperationRow({ op }: { op: OperationResult }) {
   const config = PATH_CONFIG[op.path] ?? PATH_CONFIG.visual;
+  const isFallback = op.path === "fallback_visual";
 
   return (
     <div className="flex items-start gap-2 py-1.5">
@@ -40,6 +41,11 @@ function OperationRow({ op }: { op: OperationResult }) {
         >
           {config.badge}
         </span>
+        {isFallback && op.error && (
+          <div className="mt-1 text-[10px] text-orange-600 leading-tight">
+            Programmatic edit failed: {op.error} — completed via AI instead
+          </div>
+        )}
       </div>
     </div>
   );

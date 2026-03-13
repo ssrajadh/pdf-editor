@@ -50,7 +50,8 @@ pdf-editor/
 │   │   ├── test_edit_ws.py            # WebSocket endpoint tests
 │   │   ├── test_orchestrator_prompt.py # Prompt & JSON parsing tests
 │   │   ├── test_layout_awareness.py   # Layout analyzer + layout-aware planner tests
-│   │   └── test_edge_cases.py         # Edge cases: multi-match, batch, protected, colored bg, font calibration
+│   │   ├── test_edge_cases.py         # Edge cases: multi-match, batch, protected, colored bg, font calibration
+│   │   └── test_e2e_phase2_5.py       # Multi-document E2E validation matrix (4 doc types × edits)
 │   ├── requirements.txt
 │   └── pyproject.toml
 ├── frontend/
@@ -253,6 +254,8 @@ The WebSocket streams rich progress events:
 - Docker: multi-stage frontend build (Node → nginx:alpine), backend with poppler
 - nginx config with API/WebSocket proxy and SPA fallback
 - Docker Compose with healthcheck, shared volume, restart policy
+- E2E phase 2.5 multi-document validation: 12/12 tests pass across 4 doc types (simple, slide, resume with CID, colored header)
+- Frontend: plan preview shows page analysis (layout complexity, columns, CID fonts), context disambiguation, fallback_visual reasons
 
 ### TODO
 - Multi-page batch edits
@@ -265,24 +268,23 @@ The WebSocket streams rich progress events:
 ```bash
 cd backend
 
-# Programmatic PDF editor — 9 tests, no API key needed
-.venv/bin/python -m tests.test_pdf_editor
+# PyMuPDF editor — 22 tests, no API key needed
+.venv/bin/python -m tests.test_pdf_editor_v2
 
-# Orchestrator E2E — 3 tests (pure text, pure visual, hybrid), requires API key
-.venv/bin/python -m tests.test_orchestrator_e2e
+# Edge cases — 28 tests, no API key needed
+# (multi-match, batch replace, protected PDFs, font calibration, rect expansion)
+.venv/bin/python -m tests.test_edge_cases
 
-# Full pipeline E2E — 3 tests (programmatic path, visual base image, hybrid), requires API key
-.venv/bin/python -m tests.test_pipeline_e2e
-
-# Visual description — requires API key
-.venv/bin/python -m tests.test_visual_description
-
-# Layout awareness — unit tests (no API key) + planner tests (requires API key)
+# Layout awareness — unit + planner tests
 .venv/bin/python -m tests.test_layout_awareness
 .venv/bin/python -m tests.test_layout_awareness --real  # includes real PDF tests
 
-# Edge cases — multi-match, batch, protected, colored bg, font calibration (no API key)
-.venv/bin/python -m tests.test_edge_cases
+# End-to-end phase 2.5 — multi-document validation matrix (requires API key)
+# Tests 4 document types × multiple edits, prints summary table
+.venv/bin/python -m tests.test_e2e_phase2_5 --all
+
+# Orchestrator E2E — 3 tests (requires API key)
+.venv/bin/python -m tests.test_e2e_orchestrator --all
 
 # Gemini API integration
 .venv/bin/python -m tests.test_model_provider
