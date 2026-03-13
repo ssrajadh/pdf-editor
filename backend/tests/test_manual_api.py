@@ -106,11 +106,9 @@ async def main():
         plan = r.json()
         print(f"  Plan: {json.dumps(plan, indent=2)[:500]}")
 
-        has_visual = any(op.get("type") == "visual_regenerate" for op in plan.get("operations", []))
-        no_text_replace = not any(op.get("type") == "text_replace" for op in plan.get("operations", []))
-        record("CID: routes to visual_regenerate", has_visual,
+        has_text_replace = any(op.get("type") == "text_replace" for op in plan.get("operations", []))
+        record("Planner routes to text_replace (PyMuPDF handles CID)", has_text_replace,
                f"ops={[op['type'] for op in plan.get('operations', [])]}")
-        record("CID: no text_replace attempted", no_text_replace)
 
         # ---------------------------------------------------------------
         # 7. WebSocket edit (real edit on CID font PDF)

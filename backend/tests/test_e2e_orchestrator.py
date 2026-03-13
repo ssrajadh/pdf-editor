@@ -72,20 +72,21 @@ def _extract_text_from_original(session_mgr: SessionManager, session_id: str, pa
 
 def _check_fonts(pdf_path: Path, page_num: int = 1) -> dict:
     """Check what font types are in a PDF."""
-    import pikepdf
-    pdf = pikepdf.open(pdf_path)
-    page = pdf.pages[page_num - 1]
-    resources = page.get("/Resources", {})
-    fonts = resources.get("/Font", {})
+    import fitz
+    doc = fitz.open(str(pdf_path))
+    page = doc[page_num - 1]
+    fonts_raw = page.get_fonts()
     info = {}
-    for name in fonts:
-        font = fonts[name]
-        info[str(name)] = {
-            "subtype": str(font.get("/Subtype", "")).lstrip("/"),
-            "encoding": str(font.get("/Encoding", "")).lstrip("/"),
-            "base_font": str(font.get("/BaseFont", "")).lstrip("/"),
+    for font in fonts_raw:
+        xref, ext, ftype, name, ref_name, encoding = font[:6] if len(font) >= 6 else (font + (None,) * (6 - len(font)))
+        info[ref_name or f"F{xref}"] = {
+            "subtype": ftype or "",
+            "encoding": encoding or "",
+            "base_font": name or "",
         }
-    pdf.close()
+    has_cid = any("Type0" in str(f.get("subtype", "")) or "CID" in str(f.get("subtype", ""))
+                   for f in info.values())
+    doc.close()
     return info
 
 
@@ -114,8 +115,7 @@ def test_pdf_structure(pdf_path: Path, label: str):
         print(f"    {name}: {info['subtype']} / {info['encoding']} / {info['base_font']}")
 
     if has_cid:
-        print("\n  ⚠️  CID (Type0) fonts detected — programmatic text editing will escalate to visual")
-        print("     This is CORRECT behavior: CID byte sequences cannot be trivially replaced")
+        print("\n  ℹ️  CID (Type0) fonts detected — PyMuPDF redact-and-overlay handles these")
     if has_type1:
         print("\n  ✅ Type1 fonts detected — programmatic text editing should work")
 
@@ -428,14 +428,11 @@ async def test_real_pdf_analysis(session_mgr: SessionManager, orchestrator: Orch
         if hasattr(op, "prompt") and op.type == "visual_regenerate":
             print(f"        prompt: {op.prompt!r}")
 
-    # If CID fonts, we expect visual path
-    if info["has_cid"]:
-        routes_visual = any(
-            op.type == "visual_regenerate" for op in plan.operations
-        )
-        record("Real PDF: CID fonts → planner routes correctly",
-               routes_visual or any(op.confidence < 0.5 for op in plan.operations),
-               f"CID detected, types={[op.type for op in plan.operations]}")
+    # With PyMuPDF redact-and-overlay, even CID font PDFs can use text_replace
+    has_text_replace = any(op.type == "text_replace" for op in plan.operations)
+    record("Real PDF: planner routes to text_replace",
+           has_text_replace,
+           f"types={[op.type for op in plan.operations]}")
 
     # Try executing the edit to see the full pipeline
     print(f"\n  --- Executing edit on real PDF ---")

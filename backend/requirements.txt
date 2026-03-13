@@ -4,6 +4,7 @@ websockets
 python-multipart
 pdfplumber
 pikepdf
+PyMuPDF>=1.24.0
 Pillow
 reportlab
 httpx

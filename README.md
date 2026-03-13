@@ -146,13 +146,14 @@ Benchmarks recorded on Gemini 2.5 Flash (planning) + Gemini 2.5 Flash Image (vis
 | Plan preview (simple text replace) | ~10-12s | Dominated by Gemini planning API latency |
 | Pure text replace (Q3→Q4, 4 ops) | ~11s total | ~9s planning + ~500ms per programmatic op |
 | Multi-text replace (7 ops) | ~11s total | Planning + ~200ms per op (sequential) |
-| Visual edit (CID font PDF) | ~28-35s | ~14s planning + ~13-20s Gemini image generation |
-| Programmatic edit only (no planning) | ~200ms | Direct pikepdf content stream modification |
+| Real resume edit (CID fonts) | ~6s total | ~5s planning + ~636ms programmatic (PyMuPDF) |
+| Visual edit (layout/chart change) | ~28-35s | ~14s planning + ~13-20s Gemini image generation |
+| Programmatic edit only (no planning) | ~500-600ms | PyMuPDF redact-and-overlay |
 
 **Key observations:**
-- Planning LLM latency (~9-14s) dominates all operations; actual programmatic edits are ~200ms
-- CID (Type0) fonts are correctly detected and routed to visual — no wasted programmatic attempts
-- Overflow detection works: short→long replacements correctly escalate to visual with confidence < 0.5
+- Planning LLM latency (~9-14s) dominates all operations; actual programmatic edits are ~500ms
+- PyMuPDF redact-and-overlay handles all font types including CID (Type0) — no CID escalation needed
+- Overflow detection works: replacements exceeding 115% of bounding box width escalate to visual
 - Compound degradation prevention verified: visual base images always come from PDF render, never prior AI output
 - Sequential edits accumulate correctly in working.pdf; original.pdf stays untouched
 

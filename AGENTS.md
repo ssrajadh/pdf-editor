@@ -1,6 +1,6 @@
 # PDF Editor - Project Context
 
-AI-powered PDF editor ("Nano PDF Studio") with a chat-based editing interface. Users upload PDFs, view rendered pages, and submit natural-language edit instructions processed by a two-tier editing system: programmatic PDF structure editing (pikepdf) for text changes, and AI image generation (Gemini) for visual changes. An AI planner decomposes each instruction into the optimal mix of operations.
+AI-powered PDF editor ("Nano PDF Studio") with a chat-based editing interface. Users upload PDFs, view rendered pages, and submit natural-language edit instructions processed by a two-tier editing system: programmatic PDF text editing (PyMuPDF redact-and-overlay) for text changes, and AI image generation (Gemini) for visual changes. An AI planner decomposes each instruction into the optimal mix of operations.
 
 ## Architecture
 
@@ -10,7 +10,7 @@ frontend/ (React 19 + Vite 5 + TypeScript + Tailwind CSS 3)
 backend/  (FastAPI + Python 3.12)
    ├── Orchestrator (planning + execution coordination)
    │   ├── Planner (Gemini 2.5 Flash — text-only, structured JSON output)
-   │   ├── PdfEditor (pikepdf content stream editing — text_replace, style_change)
+   │   ├── PdfEditor (PyMuPDF redact-and-overlay — text_replace, style_change)
    │   └── Visual engine (Gemini 2.5 Flash Image — visual_regenerate)
    ├── poppler (pdftoppm for rendering)
    ├── pdfplumber (text extraction)
@@ -30,7 +30,7 @@ pdf-editor/
 │   │   │   └── edit.py          # WebSocket edit endpoint (3-arg progress: stage, message, extra), history, revert
 │   │   ├── services/
 │   │   │   ├── orchestrator.py  # Orchestrator: PageContext, planner (plan_edit), execute pipeline, text layer handling
-│   │   │   ├── pdf_editor.py    # PdfEditor: pikepdf content stream text replace + style change, working PDF management
+│   │   │   ├── pdf_editor.py    # PdfEditor: PyMuPDF redact-and-overlay text replace + style change, font matching, bg detection
 │   │   │   ├── edit_engine.py   # EditEngine: concurrency locks, delegates to Orchestrator
 │   │   │   ├── pdf_service.py   # pdftoppm rendering, pdfplumber text extraction, compound degradation prevention, export
 │   │   │   └── model_provider.py # Abstract ModelProvider, GeminiProvider (edit_image, analyze_image, plan_edit), ProviderFactory
@@ -150,14 +150,16 @@ Each operation has a `confidence` score. Operations with confidence < 0.5 skip t
 ### 2. Execution Phase
 Operations execute in `execution_order` (programmatic first, then visual):
 
-**Programmatic path** (`PdfEditor`):
-- Opens `working.pdf` (lazy-copied from `original.pdf`)
-- Parses PDF content streams via `pikepdf.parse_content_stream()`
-- Locates text via `Tj`/`TJ` operators, tracks font state via `Tf`/`Tm`
-- Applies replacement preserving kerning structure in TJ arrays
-- Overflow check: replacement >120% of original length → escalates to visual
-- CID fonts (Type0, 2-byte encoding) → escalates to visual
-- Saves working PDF and re-renders the page via pdftoppm
+**Programmatic path** (`PdfEditor` — PyMuPDF redact-and-overlay):
+- Opens `working.pdf` (lazy-copied from `original.pdf`) via `fitz.open()`
+- Finds text via `page.search_for()` — returns bounding box rects
+- Extracts text properties (font, size, color, flags, baseline origin) via `page.get_text("dict")`
+- Detects background color by sampling corner pixels of a rendered clip
+- Checks overflow: `fitz.get_text_length()` estimates replacement width vs original bbox
+- Redacts original text with `page.add_redact_annot()` + background fill
+- Overlays replacement text with `page.insert_text()` using matched standard font
+- Works on ALL font types including CID (Type0) — no content stream parsing needed
+- Saves working PDF incrementally and re-renders via pdftoppm
 
 **Visual path** (Gemini Image):
 - **Compound degradation prevention**: base image is always rendered from `working.pdf` (or `original.pdf` if no programmatic edits), never from a previously AI-generated image
@@ -192,9 +194,10 @@ The WebSocket streams rich progress events:
 - **Orchestrator planner pattern**: LLM decomposes instructions into optimal operation mix; execution engine routes each operation to the right path
 - **Working PDF strategy**: `original.pdf` stays pristine; `working.pdf` (lazy copy) accumulates programmatic edits; visual edits produce images only
 - **Compound degradation prevention**: visual model always sees a clean PDF-rendered image via `get_current_base_image()`, never a prior AI output — prevents quality loss over multiple edits
-- **pikepdf content stream editing**: directly modifies PDF operators (Tj, TJ, Tf, rg) for text replacement and style changes; preserves kerning structure in TJ arrays
-- **Overflow rule**: text replacements >120% of original character length escalate to visual (would break layout)
-- **CID font detection**: Type0 (CID) fonts escalate to visual since they use 2-byte encodings that can't be trivially replaced
+- **PyMuPDF redact-and-overlay editing**: finds text via `page.search_for()`, redacts the original with a background-color-matched rectangle, then overlays replacement text with a style-matched standard font. Works reliably across all font types including CID (Type0) — no content stream manipulation needed
+- **Overflow rule**: replacement text width estimated via `fitz.get_text_length()` — if >115% of original bounding box width, escalates to visual
+- **Font matching**: maps original fonts to closest standard PDF base font (Helvetica/Times/Courier families) based on font name heuristics and bold/italic flags
+- **Background color detection**: samples corner pixels of a rendered clip around the text rect to match the fill color for redaction
 - **pdftoppm (poppler) for rendering**: faster and higher quality than Python-native options at 200 DPI
 - **pdfplumber for text extraction**: provides character-level position metadata (x0, y0, x1, y1, font, size)
 - **Page versioning**: images are `page_{num}_v{version}.png`; metadata tracks current version per page
@@ -220,7 +223,7 @@ The WebSocket streams rich progress events:
 - Gemini AI provider with retry/backoff on 429+5xx, timeout handling, content filter detection
 - Provider factory pattern for future multi-model support
 - **Orchestrator planner**: vision-based page analysis, structured JSON planning via Gemini 2.5 Flash
-- **Programmatic PDF editor**: pikepdf content stream editing (text replace, style change), overflow detection, CID font detection
+- **Programmatic PDF editor**: PyMuPDF redact-and-overlay (text replace, style change), overflow detection, font matching, background color detection
 - **Two-tier execution pipeline**: programmatic-first execution, visual fallback, compound degradation prevention
 - **Text layer handling**: programmatic_edit (perfect), ocr (stale), mixed, original
 - Rich WebSocket progress with plan data and per-operation tracking
@@ -285,7 +288,7 @@ docker compose -f docker/docker-compose.yml up --build
 
 ## Dependencies
 
-**Backend**: fastapi, uvicorn[standard], websockets, python-multipart, pdfplumber, pikepdf, Pillow, reportlab, httpx, python-dotenv, pydantic, pydantic-settings
+**Backend**: fastapi, uvicorn[standard], websockets, python-multipart, pdfplumber, pikepdf, PyMuPDF, Pillow, reportlab, httpx, python-dotenv, pydantic, pydantic-settings
 
 **Frontend**: react, react-dom, lucide-react, react-pdf, typescript, vite, @vitejs/plugin-react, tailwindcss, postcss, autoprefixer
 
