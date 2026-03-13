@@ -67,6 +67,15 @@ class EditVersion(BaseModel):
     prompt: str
     created_at: str
     text_layer_preserved: bool
+    plan_summary: str = ""
+    operations: list["OperationResult"] = []
+    base_source: str = ""
+    text_layer_source: str = ""
+    working_pdf_modified: bool = False
+
+
+class PlanPreviewRequest(BaseModel):
+    prompt: str
 
 
 class TextLayerResponse(BaseModel):
@@ -203,3 +212,7 @@ class ExecutionResult(BaseModel):
     programmatic_count: int
     visual_count: int
     text_layer_source: Literal["original", "programmatic_edit", "mixed", "ocr"]
+
+
+# Resolve forward references
+EditVersion.model_rebuild()

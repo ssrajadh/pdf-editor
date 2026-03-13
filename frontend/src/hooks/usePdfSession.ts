@@ -7,7 +7,11 @@ import type {
   ExecutionPlan,
   PageEditType,
 } from "../types";
-import { uploadPdf as apiUploadPdf, getPageImageUrl } from "../services/api";
+import {
+  uploadPdf as apiUploadPdf,
+  getPageImageUrl,
+  previewPlan as apiPreviewPlan,
+} from "../services/api";
 import { useWebSocket } from "./useWebSocket";
 
 let msgCounter = 0;
@@ -25,6 +29,7 @@ export function usePdfSession() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [editCount, setEditCount] = useState(0);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const sessionStartRef = useRef<number | null>(null);
 
   const currentPlanRef = useRef<ExecutionPlan | null>(null);
@@ -193,6 +198,74 @@ export function usePdfSession() {
     [session, currentPage, isEditing, wsSendEdit, appendMsg],
   );
 
+  const previewPlan = useCallback(
+    async (prompt: string) => {
+      if (!session || isEditing || isPreviewing) return;
+
+      setIsPreviewing(true);
+
+      appendMsg(currentPage, {
+        id: nextId(),
+        role: "user",
+        content: prompt,
+        timestamp: new Date().toISOString(),
+      });
+
+      appendMsg(currentPage, {
+        id: "preview-loading",
+        role: "progress",
+        content: "Generating execution plan...",
+        timestamp: new Date().toISOString(),
+        stage: "planning",
+      });
+
+      try {
+        const plan = await apiPreviewPlan(session.session_id, currentPage, prompt);
+
+        removeProgressMsgs(currentPage);
+
+        const progCount = plan.operations.filter(
+          (op) => op.type !== "visual_regenerate",
+        ).length;
+        const visCount = plan.operations.filter(
+          (op) => op.type === "visual_regenerate",
+        ).length;
+
+        appendMsg(currentPage, {
+          id: nextId(),
+          role: "assistant",
+          content: `Plan: ${plan.operations.length} operations — ${progCount} programmatic, ${visCount} visual`,
+          timestamp: new Date().toISOString(),
+          plan,
+          isPlanPreview: true,
+          previewPrompt: prompt,
+        });
+      } catch (err) {
+        removeProgressMsgs(currentPage);
+        appendMsg(currentPage, {
+          id: nextId(),
+          role: "assistant",
+          content: `Error: ${err instanceof Error ? err.message : "Plan preview failed"}`,
+          timestamp: new Date().toISOString(),
+        });
+      } finally {
+        setIsPreviewing(false);
+      }
+    },
+    [session, currentPage, isEditing, isPreviewing, appendMsg, removeProgressMsgs],
+  );
+
+  const executePlanEdit = useCallback(
+    (prompt: string) => {
+      if (!session || isEditing) return;
+
+      setEditingPage(currentPage);
+      lastPromptRef.current = { page: currentPage, prompt };
+      wsSendEdit(currentPage, prompt);
+    },
+    [session, currentPage, isEditing, wsSendEdit],
+  );
+
   const retryLastEdit = useCallback(() => {
     const last = lastPromptRef.current;
     if (!last || isEditing) return;
@@ -229,6 +302,7 @@ export function usePdfSession() {
     currentMessages,
     editProgress,
     isEditing,
+    isPreviewing,
     isConnected,
     isReconnecting,
     uploading,
@@ -239,6 +313,8 @@ export function usePdfSession() {
     uploadPdf,
     selectPage,
     sendEdit,
+    previewPlan,
+    executePlanEdit,
     retryLastEdit,
     getImageUrl,
     setSession,

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from app.config import settings
-from app.models.schemas import EditResult, EditVersion
+from app.models.schemas import EditResult, EditVersion, ExecutionPlan, PlanPreviewRequest
 from app.services.edit_engine import EditEngine
 from app.services.model_provider import ProviderFactory
 from app.storage.session import SessionManager
@@ -124,6 +124,31 @@ async def edit_websocket(websocket: WebSocket, session_id: str):
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for session %s", session_id)
+
+
+@router.post(
+    "/{session_id}/page/{page_num}/plan-preview",
+    response_model=ExecutionPlan,
+)
+async def plan_preview(
+    session_id: str, page_num: int, body: PlanPreviewRequest,
+):
+    """Generate an execution plan without running it.
+
+    Useful for debugging, testing, and demoing the planner logic.
+    """
+    try:
+        session_mgr.get_session_path(session_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        return await edit_engine.preview_plan(session_id, page_num, body.prompt)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Plan preview failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Plan preview failed")
 
 
 @router.get(

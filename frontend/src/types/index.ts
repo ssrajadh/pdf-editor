@@ -70,6 +70,8 @@ export interface ChatMessage {
   stage?: string;
   op_index?: number;
   total_ops?: number;
+  isPlanPreview?: boolean;
+  previewPrompt?: string;
 }
 
 export interface PageTextBlock {

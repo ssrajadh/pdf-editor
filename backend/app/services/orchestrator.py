@@ -8,7 +8,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Literal
 
 from PIL import Image
 
@@ -179,6 +179,16 @@ def _make_fallback_plan(instruction: str) -> ExecutionPlan:
 
 
 # ---------------------------------------------------------------------------
+# No-op progress callback for plan-only operations
+# ---------------------------------------------------------------------------
+
+
+async def _noop_progress(stage: str, message: str, extra: dict | None = None) -> None:
+    """Silent progress callback used for plan preview."""
+    pass
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator — plan + execute
 # ---------------------------------------------------------------------------
 
@@ -249,6 +259,17 @@ class Orchestrator:
         )
         return plan
 
+    async def plan_only(
+        self,
+        session_id: str,
+        page_num: int,
+        instruction: str,
+    ) -> ExecutionPlan:
+        """Plan without executing — used by the plan-preview endpoint."""
+        return await self.plan(
+            session_id, page_num, instruction, _noop_progress,
+        )
+
     async def _parse_with_retry(
         self, raw: str, instruction: str,
     ) -> ExecutionPlan:
@@ -274,6 +295,70 @@ class Orchestrator:
             return _make_fallback_plan(instruction)
 
     # ------------------------------------------------------------------
+    # Base image selection — compound degradation prevention
+    # ------------------------------------------------------------------
+
+    def _get_visual_edit_base_image(
+        self,
+        session_id: str,
+        page_num: int,
+        programmatic_ops_applied: bool,
+    ) -> tuple[Image.Image, Literal["original_pdf", "working_pdf"]]:
+        """Determines the correct base image for a visual regeneration operation.
+
+        Rules:
+        1. If programmatic edits were applied earlier in THIS plan:
+           → Render from working PDF (includes the text changes).
+           The visual model sees "Q4" not "Q3" if we already swapped it.
+
+        2. If programmatic edits were applied in PREVIOUS plans (earlier in
+           the session) but not in the current plan:
+           → Still render from working PDF (it accumulates all programmatic edits).
+
+        3. NEVER use a previously AI-generated image as the base.
+           The chain is always:
+             original.pdf → (programmatic edits) → working.pdf → render → model
+           NOT:
+             previous_model_output.png → model again
+
+        4. If the user makes a second visual edit to the same page (e.g., first
+           changed the chart, now wants to change the background):
+           The base is STILL the working PDF render, not the previous visual
+           output. This means the first visual edit's changes are lost — the
+           second visual edit starts fresh from the PDF state.
+
+           This is a deliberate tradeoff: we lose visual edit stacking but
+           prevent compound degradation.
+
+        5. Exception for Phase 3 (future): conversational refinement of a
+           visual edit ("make it more blue") will need the previous output.
+        """
+        session_path = self.sessions.get_session_path(session_id)
+        working_pdf = session_path / "working.pdf"
+
+        if working_pdf.exists():
+            source: Literal["original_pdf", "working_pdf"] = "working_pdf"
+            image = pdf_service.render_page_to_image(working_pdf, page_num)
+            logger.info(
+                "Visual base image for page %d: rendered from working.pdf "
+                "(programmatic_in_plan=%s, size=%dx%d)",
+                page_num, programmatic_ops_applied,
+                image.size[0], image.size[1],
+            )
+        else:
+            source = "original_pdf"
+            image = pdf_service.render_page_to_image(
+                session_path / "original.pdf", page_num,
+            )
+            logger.info(
+                "Visual base image for page %d: rendered from original.pdf "
+                "(no working.pdf exists, size=%dx%d)",
+                page_num, image.size[0], image.size[1],
+            )
+
+        return image, source
+
+    # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
@@ -289,7 +374,7 @@ class Orchestrator:
 
         Programmatic ops modify the working PDF and re-render from it.
         Visual ops always get a fresh PDF-rendered base image (never an
-        AI-generated one) via get_current_base_image().
+        AI-generated one) via _get_visual_edit_base_image().
         """
         t_start = time.monotonic()
         session_path = self.sessions.get_session_path(session_id)
@@ -297,6 +382,8 @@ class Orchestrator:
 
         programmatic_ran = False
         visual_ran = False
+        working_pdf_modified = False
+        base_source = ""
 
         for exec_pos, op_idx in enumerate(plan.execution_order):
             if op_idx < 0 or op_idx >= len(plan.operations):
@@ -312,12 +399,11 @@ class Orchestrator:
                 )
                 if result.path == "programmatic" and result.success:
                     programmatic_ran = True
+                    working_pdf_modified = True
                 elif result.path == "fallback_visual" and result.success:
                     visual_ran = True
 
             elif isinstance(op, VisualRegenerateOp):
-                # Read current version (may have been bumped by preceding
-                # programmatic ops).
                 metadata = self.sessions.get_metadata(session_id)
                 cur_v = int(
                     metadata.get("current_page_versions", {}).get(str(page_num), 0)
@@ -363,14 +449,12 @@ class Orchestrator:
 
         # --- Text layer handling ---
         if programmatic_ran and not visual_ran:
-            # All programmatic — extract perfect text layer from working PDF
             text_layer_source = "programmatic_edit"
             await self._save_text_layer_from_working_pdf(
                 session_id, page_num, final_version,
             )
         elif programmatic_ran and visual_ran:
             text_layer_source = "mixed"
-            # Mark text layer as stale — visual ops changed the rendered output
             self._save_stale_text_layer(session_path, page_num, final_version)
         elif visual_ran:
             text_layer_source = "ocr"
@@ -378,10 +462,26 @@ class Orchestrator:
         else:
             text_layer_source = "original"
 
-        # Save edit record
+        # Determine base_source for this edit
+        if visual_ran:
+            working_pdf = session_path / "working.pdf"
+            base_source = "working_pdf" if working_pdf.exists() else "original_pdf"
+        elif programmatic_ran:
+            base_source = "working_pdf"
+        else:
+            base_source = "original_pdf"
+
+        # Save rich edit record
         self._save_edit_record(
-            session_path, page_num, final_version, instruction,
-            text_layer_preserved=(text_layer_source in ("programmatic_edit", "original")),
+            session_path=session_path,
+            page_num=page_num,
+            version=final_version,
+            prompt=instruction,
+            plan_summary=plan.summary,
+            operations=op_results,
+            base_source=base_source,
+            text_layer_source=text_layer_source,
+            working_pdf_modified=working_pdf_modified,
         )
 
         total_ms = int((time.monotonic() - t_start) * 1000)
@@ -425,7 +525,6 @@ class Orchestrator:
                 "programmatic", f"Text replacement: {desc}", {"op_index": op_idx},
             )
 
-            # Skip low-confidence ops (planner flagged them for visual fallback)
             if op.confidence < 0.5:
                 logger.info(
                     "Skipping low-confidence text_replace (%.2f): %s",
@@ -541,13 +640,9 @@ class Orchestrator:
     ) -> OperationResult:
         """Execute a visual_regenerate operation.
 
-        CRITICAL: The base image is always rendered from the PDF (working or
-        original), never from a previously AI-generated image. This prevents
-        compound quality degradation.
-
-        If programmatic edits ran before this visual op, the working PDF
-        already contains those changes, so the rendered base image will
-        reflect them — giving the visual model the correct starting point.
+        Uses _get_visual_edit_base_image() to ensure we NEVER use a
+        previously AI-generated image as the base. This prevents compound
+        quality degradation across multiple visual edits.
         """
         prompt_preview = op.prompt[:80] + ("..." if len(op.prompt) > 80 else "")
         await on_progress(
@@ -555,22 +650,18 @@ class Orchestrator:
         )
 
         try:
-            session_path = self.sessions.get_session_path(session_id)
-
-            # COMPOUND DEGRADATION PREVENTION: render from PDF, not from
-            # the page image cache (which might be AI-generated)
-            base_image = await asyncio.to_thread(
-                pdf_service.get_current_base_image, session_path, page_num,
+            base_image, base_source = await asyncio.to_thread(
+                self._get_visual_edit_base_image,
+                session_id, page_num, programmatic_preceded,
             )
             logger.info(
-                "Visual op %d: base image from %s PDF (%dx%d)",
-                op_idx,
-                "working" if (session_path / "working.pdf").exists() else "original",
-                base_image.size[0], base_image.size[1],
+                "Visual op %d: base from %s (%dx%d)",
+                op_idx, base_source, base_image.size[0], base_image.size[1],
             )
 
             result_image = await self.provider.edit_image(base_image, op.prompt)
 
+            session_path = self.sessions.get_session_path(session_id)
             new_path = session_path / "pages" / f"page_{page_num}_v{version}.png"
             await asyncio.to_thread(result_image.save, new_path, "PNG")
             logger.info("Visual op %d saved: %s", op_idx, new_path.name)
@@ -604,7 +695,7 @@ class Orchestrator:
     ) -> OperationResult:
         """Fall back to visual editing when a programmatic op fails.
 
-        Uses get_current_base_image() to avoid compound degradation.
+        Uses _get_visual_edit_base_image() to avoid compound degradation.
         """
         if isinstance(op, TextReplaceOp):
             visual_prompt = (
@@ -621,15 +712,14 @@ class Orchestrator:
             )
 
         try:
-            session_path = self.sessions.get_session_path(session_id)
-
-            # COMPOUND DEGRADATION PREVENTION
-            base_image = await asyncio.to_thread(
-                pdf_service.get_current_base_image, session_path, page_num,
+            base_image, base_source = await asyncio.to_thread(
+                self._get_visual_edit_base_image,
+                session_id, page_num, False,
             )
 
             result_image = await self.provider.edit_image(base_image, visual_prompt)
 
+            session_path = self.sessions.get_session_path(session_id)
             metadata = self.sessions.get_metadata(session_id)
             current_version = int(
                 metadata.get("current_page_versions", {}).get(str(page_num), 0)
@@ -726,13 +816,19 @@ class Orchestrator:
         page_num: int,
         version: int,
         prompt: str,
-        text_layer_preserved: bool,
+        plan_summary: str,
+        operations: list[OperationResult],
+        base_source: str,
+        text_layer_source: str,
+        working_pdf_modified: bool,
     ) -> None:
-        """Append an entry to the page's edit history file."""
+        """Append a rich entry to the page's edit history file."""
         history_path = session_path / "edits" / f"page_{page_num}_history.json"
         history: list[dict] = []
         if history_path.exists():
             history = json.loads(history_path.read_text())
+
+        text_layer_preserved = text_layer_source in ("programmatic_edit", "original")
 
         from datetime import datetime, timezone
         history.append({
@@ -740,5 +836,10 @@ class Orchestrator:
             "prompt": prompt,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "text_layer_preserved": text_layer_preserved,
+            "plan_summary": plan_summary,
+            "operations": [op.model_dump() for op in operations],
+            "base_source": base_source,
+            "text_layer_source": text_layer_source,
+            "working_pdf_modified": working_pdf_modified,
         })
         history_path.write_text(json.dumps(history))

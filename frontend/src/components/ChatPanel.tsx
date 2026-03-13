@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, CheckCircle2, AlertCircle, Sparkles, RotateCcw } from "lucide-react";
+import { Send, Loader2, CheckCircle2, AlertCircle, Sparkles, RotateCcw, Eye, Play } from "lucide-react";
 import type { ChatMessage } from "../types";
 import OperationBreakdown from "./OperationBreakdown";
 import ExecutionPlanPreview from "./ExecutionPlanPreview";
@@ -8,7 +8,10 @@ interface Props {
   messages: ChatMessage[];
   currentPage: number;
   isEditing: boolean;
+  isPreviewing?: boolean;
   onSendEdit: (prompt: string) => void;
+  onPreviewPlan?: (prompt: string) => void;
+  onExecutePlan?: (prompt: string) => void;
   onRetry?: () => void;
 }
 
@@ -23,7 +26,10 @@ export default function ChatPanel({
   messages,
   currentPage,
   isEditing,
+  isPreviewing,
   onSendEdit,
+  onPreviewPlan,
+  onExecutePlan,
   onRetry,
 }: Props) {
   const [input, setInput] = useState("");
@@ -36,9 +42,16 @@ export default function ChatPanel({
 
   const handleSubmit = () => {
     const text = input.trim();
-    if (!text || isEditing) return;
+    if (!text || isEditing || isPreviewing) return;
     setInput("");
     onSendEdit(text);
+  };
+
+  const handlePreview = () => {
+    const text = input.trim();
+    if (!text || isEditing || isPreviewing || !onPreviewPlan) return;
+    setInput("");
+    onPreviewPlan(text);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -50,6 +63,7 @@ export default function ChatPanel({
 
   const lastMessage = messages[messages.length - 1];
   const showRetry = lastMessage?.role === "assistant" && lastMessage.content.startsWith("Error:") && !isEditing && onRetry;
+  const busy = isEditing || isPreviewing;
 
   return (
     <div className="flex flex-col h-full">
@@ -63,7 +77,7 @@ export default function ChatPanel({
 
         {messages.map((msg) => (
           <div key={msg.id} className="animate-fade-in">
-            <MessageBubble message={msg} />
+            <MessageBubble message={msg} onExecutePlan={onExecutePlan} />
           </div>
         ))}
 
@@ -88,7 +102,7 @@ export default function ChatPanel({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={`Describe your edit for page ${currentPage}...`}
-            disabled={isEditing}
+            disabled={busy}
             rows={1}
             className="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm
                        focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
@@ -100,9 +114,27 @@ export default function ChatPanel({
               el.style.height = Math.min(el.scrollHeight, 128) + "px";
             }}
           />
+          {onPreviewPlan && (
+            <button
+              onClick={handlePreview}
+              disabled={busy || !input.trim()}
+              title="Preview plan without executing"
+              className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg
+                         border border-gray-300 text-gray-500 hover:text-blue-600
+                         hover:border-blue-300 hover:bg-blue-50
+                         disabled:border-gray-200 disabled:text-gray-300 disabled:cursor-not-allowed
+                         transition-colors"
+            >
+              {isPreviewing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Eye className="w-4 h-4" />
+              )}
+            </button>
+          )}
           <button
             onClick={handleSubmit}
-            disabled={isEditing || !input.trim()}
+            disabled={busy || !input.trim()}
             title="Send (Enter)"
             className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg
                        bg-blue-600 text-white hover:bg-blue-700
@@ -187,7 +219,98 @@ function ProgressBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function PlanPreviewCard({
+  message,
+  onExecute,
+}: {
+  message: ChatMessage;
+  onExecute?: (prompt: string) => void;
+}) {
+  const plan = message.plan!;
+
+  const TYPE_LABELS: Record<string, { icon: string; label: string }> = {
+    text_replace: { icon: "⚡", label: "Text Replace" },
+    style_change: { icon: "⚡", label: "Style Change" },
+    visual_regenerate: { icon: "🎨", label: "Visual Edit" },
+  };
+
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[95%] px-3 py-2 rounded-2xl rounded-bl-md text-sm bg-gray-100 text-gray-800">
+        <div className="flex items-center gap-1.5 mb-2">
+          <Eye className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+          <span className="font-medium">Plan Preview</span>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white text-xs overflow-hidden">
+          <div className="px-3 py-2 border-b border-gray-100 text-gray-600 font-medium">
+            {plan.summary}
+          </div>
+
+          {plan.all_programmatic && (
+            <div className="px-3 py-1.5 bg-green-50 border-b border-green-100 text-green-700 text-[11px] font-medium">
+              ⚡ Fast path — all operations are programmatic
+            </div>
+          )}
+
+          <div className="px-3 py-1 divide-y divide-gray-50">
+            {plan.operations.map((op, idx) => {
+              const config = TYPE_LABELS[op.type] ?? TYPE_LABELS.visual_regenerate;
+              return (
+                <div key={idx} className="py-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">{config.icon}</span>
+                    <span className="font-medium text-gray-700">
+                      #{idx + 1} {config.label}
+                    </span>
+                    <span
+                      className={`ml-auto text-[10px] font-medium tabular-nums ${
+                        op.confidence >= 0.8
+                          ? "text-green-600"
+                          : op.confidence >= 0.5
+                            ? "text-yellow-600"
+                            : "text-red-500"
+                      }`}
+                    >
+                      {Math.round(op.confidence * 100)}%
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-gray-400 ml-6 mt-0.5">
+                    {op.reasoning}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="px-3 py-2 border-t border-gray-100 text-[11px] text-gray-500">
+            Order: {plan.execution_order.map((i) => `#${i + 1}`).join(" → ")}
+          </div>
+        </div>
+
+        {onExecute && message.previewPrompt && (
+          <button
+            onClick={() => onExecute(message.previewPrompt!)}
+            className="mt-2 flex items-center gap-1.5 text-xs font-medium text-white
+                       bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg
+                       transition-colors w-full justify-center"
+          >
+            <Play className="w-3 h-3" />
+            Execute this plan
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({
+  message,
+  onExecutePlan,
+}: {
+  message: ChatMessage;
+  onExecutePlan?: (prompt: string) => void;
+}) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -200,6 +323,10 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   if (message.role === "progress") {
     return <ProgressBubble message={message} />;
+  }
+
+  if (message.isPlanPreview && message.plan) {
+    return <PlanPreviewCard message={message} onExecute={onExecutePlan} />;
   }
 
   const isError = message.content.startsWith("Error:");
@@ -230,7 +357,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           </>
         )}
 
-        {message.plan && <ExecutionPlanPreview plan={message.plan} />}
+        {message.plan && !message.isPlanPreview && (
+          <ExecutionPlanPreview plan={message.plan} />
+        )}
       </div>
     </div>
   );

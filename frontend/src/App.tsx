@@ -17,6 +17,7 @@ function App() {
     currentMessages,
     editProgress,
     isEditing,
+    isPreviewing,
     isReconnecting,
     uploading,
     uploadError,
@@ -26,6 +27,8 @@ function App() {
     uploadPdf,
     selectPage,
     sendEdit,
+    previewPlan,
+    executePlanEdit,
     retryLastEdit,
     getImageUrl,
     setSession,
@@ -253,7 +256,10 @@ function App() {
             messages={currentMessages}
             currentPage={currentPage}
             isEditing={isEditing}
+            isPreviewing={isPreviewing}
             onSendEdit={sendEdit}
+            onPreviewPlan={previewPlan}
+            onExecutePlan={executePlanEdit}
             onRetry={retryLastEdit}
           />
         </div>

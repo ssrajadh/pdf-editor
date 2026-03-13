@@ -1,4 +1,4 @@
-import type { Session, PageTextResponse } from "../types";
+import type { Session, PageTextResponse, ExecutionPlan } from "../types";
 
 const API_BASE = "/api";
 
@@ -51,6 +51,28 @@ export async function getSessionInfo(sessionId: string): Promise<Session> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "Session not found");
+  }
+
+  return res.json();
+}
+
+export async function previewPlan(
+  sessionId: string,
+  pageNum: number,
+  prompt: string,
+): Promise<ExecutionPlan> {
+  const res = await fetch(
+    `${API_BASE}/edit/${sessionId}/page/${pageNum}/plan-preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    },
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Plan preview failed");
   }
 
   return res.json();
