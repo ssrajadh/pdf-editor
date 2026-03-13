@@ -59,6 +59,8 @@ class PageContext:
     full_text: str
     text_blocks: list[TextBlock] = field(default_factory=list)
     visual_description: str = ""
+    has_cid_fonts: bool = False
+    font_info: str = ""
 
 
 async def describe_visual_elements(
@@ -84,6 +86,30 @@ async def describe_visual_elements(
     return description
 
 
+def _detect_font_capabilities(pdf_path: Path, page_num: int) -> tuple[bool, str]:
+    """Check fonts on a page for CID/Type0 encoding that prevents programmatic editing."""
+    import pikepdf
+    has_cid = False
+    lines = []
+    try:
+        pdf = pikepdf.open(pdf_path)
+        page = pdf.pages[page_num - 1]
+        resources = page.get("/Resources", {})
+        fonts = resources.get("/Font", {})
+        for name in fonts:
+            font = fonts[name]
+            subtype = str(font.get("/Subtype", "")).lstrip("/")
+            encoding = str(font.get("/Encoding", "")).lstrip("/")
+            base = str(font.get("/BaseFont", "")).lstrip("/")
+            if subtype == "Type0":
+                has_cid = True
+            lines.append(f"{name}: {subtype}/{encoding}/{base}")
+        pdf.close()
+    except Exception as e:
+        logger.warning("Font detection failed: %s", e)
+    return has_cid, "; ".join(lines)
+
+
 async def build_page_context(
     session_id: str,
     page_num: int,
@@ -101,6 +127,13 @@ async def build_page_context(
 
     dims = pdf_service.get_page_dimensions(pdf_path)
     page_width, page_height = dims[page_num - 1]
+
+    has_cid, font_info = _detect_font_capabilities(pdf_path, page_num)
+    if has_cid:
+        logger.info(
+            "Page %d has CID (Type0) fonts — programmatic editing unavailable. Fonts: %s",
+            page_num, font_info,
+        )
 
     current_version = int(
         metadata.get("current_page_versions", {}).get(str(page_num), 0)
@@ -126,6 +159,8 @@ async def build_page_context(
         full_text=full_text,
         text_blocks=text_blocks,
         visual_description=visual_description,
+        has_cid_fonts=has_cid,
+        font_info=font_info,
     )
 
 
@@ -226,6 +261,18 @@ class Orchestrator:
 
         text_blocks_json = page_context_to_text_blocks_json(ctx)
         from app.prompts.orchestrator_plan import ORCHESTRATOR_USER_TEMPLATE
+
+        font_warning = ""
+        if ctx.has_cid_fonts:
+            font_warning = (
+                "\n\n⚠️ CRITICAL: This page uses CID (Type0) fonts with Identity-H encoding. "
+                "Programmatic text_replace and style_change operations WILL FAIL on this page "
+                "because the PDF content stream uses 2-byte CID glyph indices, not ASCII characters. "
+                "You MUST use visual_regenerate for ALL changes on this page. "
+                "Do NOT suggest text_replace or style_change operations.\n"
+                f"Fonts detected: {ctx.font_info}"
+            )
+
         user_content = ORCHESTRATOR_USER_TEMPLATE.format(
             user_instruction=instruction,
             page_text=ctx.full_text,
@@ -233,7 +280,7 @@ class Orchestrator:
             page_width=ctx.page_width,
             page_height=ctx.page_height,
             visual_description=ctx.visual_description,
-        )
+        ) + font_warning
 
         raw = await self.provider.plan_edit(
             system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,

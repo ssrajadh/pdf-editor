@@ -114,10 +114,20 @@ Frontend runs at http://localhost:5173 with Vite proxying `/api` to the backend.
 ```bash
 cd backend
 
-# Programmatic PDF editor tests (9 tests)
+# Programmatic PDF editor tests (9 tests, no API key)
 .venv/bin/python -m tests.test_pdf_editor
 
-# Orchestrator end-to-end tests (requires API key, 3 tests)
+# Full end-to-end orchestrator tests (requires API key)
+# Includes: text replace, multi-replace, overflow escalation, sequential edits, plan preview
+.venv/bin/python -m tests.test_e2e_orchestrator --all
+
+# Test with a real PDF (CID font detection, visual routing)
+TEST_PDF_PATH=../your-resume.pdf .venv/bin/python -m tests.test_e2e_orchestrator --all --real
+
+# Manual API tests against a running server (requires backend running on :8000)
+TEST_PDF_PATH=../your-resume.pdf .venv/bin/python -m tests.test_manual_api
+
+# Orchestrator E2E (requires API key, 3 tests)
 .venv/bin/python -m tests.test_orchestrator_e2e
 
 # Full pipeline test — programmatic + visual + hybrid (requires API key, 3 tests)
@@ -125,15 +135,26 @@ cd backend
 
 # Gemini API integration test
 .venv/bin/python -m tests.test_model_provider
-
-# Visual description test (requires API key)
-.venv/bin/python -m tests.test_visual_description
-
-# REST API manual testing
-curl -X POST http://localhost:8000/api/pdf/upload -F "file=@test.pdf"
-curl http://localhost:8000/api/pdf/{session_id}/page/1/image -o page1.png
-curl -X POST http://localhost:8000/api/pdf/{session_id}/export -o edited.pdf
 ```
+
+## Performance
+
+Benchmarks recorded on Gemini 2.5 Flash (planning) + Gemini 2.5 Flash Image (visual), measured via `test_e2e_orchestrator`:
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| Plan preview (simple text replace) | ~10-12s | Dominated by Gemini planning API latency |
+| Pure text replace (Q3→Q4, 4 ops) | ~11s total | ~9s planning + ~500ms per programmatic op |
+| Multi-text replace (7 ops) | ~11s total | Planning + ~200ms per op (sequential) |
+| Visual edit (CID font PDF) | ~28-35s | ~14s planning + ~13-20s Gemini image generation |
+| Programmatic edit only (no planning) | ~200ms | Direct pikepdf content stream modification |
+
+**Key observations:**
+- Planning LLM latency (~9-14s) dominates all operations; actual programmatic edits are ~200ms
+- CID (Type0) fonts are correctly detected and routed to visual — no wasted programmatic attempts
+- Overflow detection works: short→long replacements correctly escalate to visual with confidence < 0.5
+- Compound degradation prevention verified: visual base images always come from PDF render, never prior AI output
+- Sequential edits accumulate correctly in working.pdf; original.pdf stays untouched
 
 ## License
 

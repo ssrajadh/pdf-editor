@@ -114,6 +114,12 @@ operations. Identify each distinct change and create a separate operation for it
 7. all_programmatic: Set to true ONLY when the operations list contains zero \
 visual_regenerate entries.
 
+8. CID FONTS: If the page uses CID (Type0) fonts with Identity-H encoding, \
+programmatic text_replace and style_change CANNOT work. The content stream uses \
+2-byte CID glyph indices, not readable characters — replacement would corrupt the \
+PDF. When CID fonts are indicated, use visual_regenerate for ALL changes, even \
+simple text swaps. The user prompt will include a font warning if CID fonts are detected.
+
 ═══════════════════════════════════════════════════════════════════════════════
 FEW-SHOT EXAMPLES
 ═══════════════════════════════════════════════════════════════════════════════
