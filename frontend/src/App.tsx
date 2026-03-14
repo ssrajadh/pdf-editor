@@ -45,11 +45,16 @@ function App() {
   useEffect(() => {
     if (!session) return;
     const handler = (e: KeyboardEvent) => {
+      // Skip when focused on text inputs
       if (
         e.target instanceof HTMLTextAreaElement ||
         e.target instanceof HTMLInputElement
       )
         return;
+
+      const mod = e.metaKey || e.ctrlKey;
+
+      // Arrow keys: page navigation
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         selectPage(Math.max(1, currentPage - 1));
@@ -57,10 +62,27 @@ function App() {
         e.preventDefault();
         selectPage(Math.min(session.page_count, currentPage + 1));
       }
+
+      // Cmd/Ctrl+Z: undo (revert one step)
+      if (mod && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        const v = pageVersions[currentPage];
+        if (v !== undefined && v > 0) {
+          // TODO: wire to revert API when history is exposed to frontend
+          toast({ description: `Undo: revert page ${currentPage} to step ${v - 1}` });
+        }
+      }
+
+      // Cmd/Ctrl+Shift+Z: redo (go forward one step)
+      if (mod && e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        // TODO: wire to redo API when history is exposed to frontend
+        toast({ description: `Redo not yet available` });
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [session, currentPage, selectPage]);
+  }, [session, currentPage, selectPage, pageVersions]);
 
   const handleExport = useCallback(async () => {
     if (!session || exporting) return;
@@ -154,7 +176,6 @@ function App() {
               pageVersion={currentPageVersion}
               isEditing={isEditing}
               editProgress={editProgress}
-              editType={pageEditTypes[currentPage]}
             />
           </div>
 

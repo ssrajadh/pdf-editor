@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import type { Session, EditProgress, PageEditType } from "@/types";
+import type { Session, EditProgress } from "@/types";
 import BeforeAfterToggle from "./BeforeAfterToggle";
 
 interface Props {
@@ -13,7 +14,6 @@ interface Props {
   pageVersion?: number;
   isEditing: boolean;
   editProgress: EditProgress | null;
-  editType?: PageEditType;
 }
 
 export default function PdfViewer({
@@ -24,7 +24,6 @@ export default function PdfViewer({
   pageVersion,
   isEditing,
   editProgress,
-  editType,
 }: Props) {
   const [loading, setLoading] = useState(true);
   const [imgError, setImgError] = useState(false);
@@ -34,12 +33,14 @@ export default function PdfViewer({
   const hasEdits = pageVersion !== undefined && pageVersion > 0;
   const displayUrl = hasEdits && showOriginal ? originalImageUrl : imageUrl;
 
+  // Reset on page change
   useEffect(() => {
     setLoading(true);
     setShowOriginal(false);
     setImgError(false);
   }, [currentPage]);
 
+  // Reset on URL change
   useEffect(() => {
     setLoading(true);
     setImgError(false);
@@ -47,32 +48,14 @@ export default function PdfViewer({
 
   return (
     <div className="flex h-full flex-col bg-canvas">
-      {/* Toolbar strip */}
-      <div className="flex h-9 items-center gap-3 border-b bg-panel-header px-4 shrink-0">
-        <span className="text-[12px] font-medium text-muted-foreground select-none">
-          Page {currentPage}
-          <span className="text-muted-foreground/50"> / {session.page_count}</span>
-        </span>
-
-        {hasEdits && (
-          <>
-            <div className="h-3.5 w-px bg-border" />
-            <BeforeAfterToggle
-              showOriginal={showOriginal}
-              onToggle={setShowOriginal}
-              editType={editType}
-            />
-          </>
-        )}
-      </div>
-
-      {/* Canvas — dark background so the PDF page "floats" */}
+      {/* ---- Canvas area ---- */}
       <div className="flex-1 overflow-auto flex items-start justify-center p-6">
         <div className="relative w-full max-w-2xl">
-          {/* Loading overlay */}
+          {/* Skeleton / loading pulse */}
           {loading && !imgError && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center rounded bg-card/80">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-sm">
+              <div className="absolute inset-0 animate-pulse rounded-sm bg-muted" />
+              <Loader2 className="relative z-10 h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           )}
 
@@ -90,7 +73,7 @@ export default function PdfViewer({
           )}
 
           {imgError ? (
-            <div className="flex flex-col items-center justify-center rounded bg-card py-20">
+            <div className="flex flex-col items-center justify-center rounded-sm bg-card py-20">
               <p className="mb-2 text-sm text-muted-foreground">
                 Failed to load page
               </p>
@@ -110,9 +93,10 @@ export default function PdfViewer({
               src={displayUrl}
               alt={`Page ${currentPage}`}
               className={cn(
-                "w-full h-auto bg-white rounded-sm transition-opacity duration-150",
+                "w-full h-auto object-contain bg-white rounded-sm",
                 "shadow-[0_2px_12px_rgba(0,0,0,0.25)]",
-                loading && "opacity-0",
+                "transition-opacity duration-150",
+                loading ? "opacity-0" : "opacity-100",
               )}
               onLoad={() => setLoading(false)}
               onError={() => {
@@ -122,6 +106,30 @@ export default function PdfViewer({
             />
           )}
         </div>
+      </div>
+
+      {/* ---- Bottom info bar ---- */}
+      <div className="flex h-9 items-center border-t bg-panel px-4 shrink-0 select-none">
+        {/* Left: page indicator */}
+        <span className="text-[12px] font-medium text-muted-foreground tabular-nums">
+          Page {currentPage}
+          <span className="text-muted-foreground/40"> of {session.page_count}</span>
+        </span>
+
+        {/* Center: before/after toggle */}
+        {hasEdits && (
+          <>
+            <Separator orientation="vertical" className="mx-3 h-4" />
+            <BeforeAfterToggle
+              showOriginal={showOriginal}
+              onToggle={setShowOriginal}
+              pageVersion={pageVersion}
+            />
+          </>
+        )}
+
+        {/* Right: reserved for zoom or empty */}
+        <div className="ml-auto" />
       </div>
     </div>
   );

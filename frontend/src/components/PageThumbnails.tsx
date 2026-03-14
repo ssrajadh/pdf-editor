@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef } from "react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Session, PageEditType } from "@/types";
 import { getPageImageUrl } from "@/services/api";
@@ -11,7 +17,113 @@ interface Props {
   pageEditTypes?: Record<number, PageEditType>;
 }
 
-const BUFFER = 3;
+/** Single thumbnail with IntersectionObserver-based lazy loading. */
+function Thumbnail({
+  sessionId,
+  pageNum,
+  version,
+  isSelected,
+  editType,
+  hasEdit,
+  onSelect,
+}: {
+  sessionId: string;
+  pageNum: number;
+  version?: number;
+  isSelected: boolean;
+  editType?: PageEditType;
+  hasEdit: boolean;
+  onSelect: () => void;
+}) {
+  const imgRef = useRef<HTMLImageElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Lazy-load via IntersectionObserver
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const img = imgRef.current;
+    if (!sentinel || !img) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          const url = getPageImageUrl(sessionId, pageNum, version);
+          img.src = url;
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [sessionId, pageNum, version]);
+
+  const showProg = hasEdit && editType?.hasProgram;
+  const showVis = hasEdit && editType?.hasVisual;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onSelect}
+          className={cn(
+            "group relative mx-auto mb-1.5 block w-[48px] rounded-sm transition-colors",
+            !isSelected && "hover:bg-muted",
+          )}
+        >
+          {/* Selection ring */}
+          <div
+            className={cn(
+              "overflow-hidden rounded-[3px] border-2 transition-all",
+              isSelected
+                ? "border-primary ring-1 ring-primary/30"
+                : "border-transparent",
+            )}
+          >
+            {/* Sentinel for IntersectionObserver + skeleton */}
+            <div ref={sentinelRef} className="aspect-[1/1.41] w-full bg-muted">
+              <img
+                ref={imgRef}
+                alt={`Page ${pageNum}`}
+                className="h-full w-full object-contain bg-white"
+              />
+            </div>
+          </div>
+
+          {/* Edit indicator dots */}
+          {(showProg || showVis) && (
+            <div className="absolute -top-0.5 -right-0.5 flex gap-[2px]">
+              {showProg && (
+                <div className="h-2 w-2 rounded-full border border-background bg-blue-500" />
+              )}
+              {showVis && (
+                <div className="h-2 w-2 rounded-full border border-background bg-purple-500" />
+              )}
+            </div>
+          )}
+
+          {/* Page number */}
+          <span
+            className={cn(
+              "mt-0.5 block text-center text-[10px] tabular-nums leading-tight",
+              isSelected
+                ? "font-medium text-primary"
+                : "text-muted-foreground",
+            )}
+          >
+            {pageNum}
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="text-[11px]">
+        Page {pageNum}
+        {hasEdit && editType?.hasProgram && editType?.hasVisual && " · programmatic + visual edits"}
+        {hasEdit && editType?.hasProgram && !editType?.hasVisual && " · programmatic edit"}
+        {hasEdit && !editType?.hasProgram && editType?.hasVisual && " · visual edit"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 export default function PageThumbnails({
   session,
@@ -20,106 +132,39 @@ export default function PageThumbnails({
   pageVersions,
   pageEditTypes,
 }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [visibleRange, setVisibleRange] = useState({ start: 1, end: 20 });
+  const selectedRef = useRef<HTMLDivElement>(null);
 
-  const updateVisibleRange = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const itemHeight = 76;
-    const scrollTop = el.scrollTop;
-    const viewHeight = el.clientHeight;
-    const start = Math.max(1, Math.floor(scrollTop / itemHeight) - BUFFER + 1);
-    const end = Math.min(
-      session.page_count,
-      Math.ceil((scrollTop + viewHeight) / itemHeight) + BUFFER,
-    );
-    setVisibleRange({ start, end });
-  }, [session.page_count]);
-
+  // Scroll selected thumbnail into view on page change
   useEffect(() => {
-    updateVisibleRange();
-  }, [updateVisibleRange]);
+    selectedRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [currentPage]);
 
   const pages = Array.from({ length: session.page_count }, (_, i) => i + 1);
 
   return (
-    <div
-      ref={containerRef}
-      onScroll={updateVisibleRange}
-      className="h-full overflow-y-auto py-2"
-    >
-      {pages.map((pageNum) => {
-        const isVisible = pageNum >= visibleRange.start && pageNum <= visibleRange.end;
-        const isSelected = pageNum === currentPage;
-        const version = pageVersions?.[pageNum];
-        const hasEdit = version !== undefined && version > 0;
-        const editType = pageEditTypes?.[pageNum];
+    <ScrollArea className="h-full">
+      <div className="py-2 px-1.5">
+        {pages.map((pageNum) => {
+          const version = pageVersions?.[pageNum];
+          const hasEdit = version !== undefined && version > 0;
+          const editType = pageEditTypes?.[pageNum];
+          const isSelected = pageNum === currentPage;
 
-        return (
-          <button
-            key={pageNum}
-            onClick={() => onSelectPage(pageNum)}
-            className={cn(
-              "relative mx-auto mb-1 block w-[48px] transition-all",
-              isSelected && "scale-105",
-            )}
-          >
-            {/* Selection indicator — left bar */}
-            <div
-              className={cn(
-                "absolute -left-[5px] top-1 bottom-4 w-[3px] rounded-r-full transition-colors",
-                isSelected ? "bg-blue-500" : "bg-transparent",
-              )}
-            />
-
-            {/* Thumbnail image */}
-            <div
-              className={cn(
-                "overflow-hidden rounded-[3px] border transition-all",
-                isSelected
-                  ? "border-blue-500/60 shadow-sm shadow-blue-500/20"
-                  : "border-transparent hover:border-border",
-              )}
-            >
-              {isVisible ? (
-                <img
-                  src={getPageImageUrl(session.session_id, pageNum, version)}
-                  alt={`Page ${pageNum}`}
-                  className="w-full h-auto bg-white"
-                  loading="lazy"
-                />
-              ) : (
-                <div className="aspect-[1/1.4] w-full animate-pulse bg-muted" />
-              )}
+          return (
+            <div key={pageNum} ref={isSelected ? selectedRef : undefined}>
+              <Thumbnail
+                sessionId={session.session_id}
+                pageNum={pageNum}
+                version={version}
+                isSelected={isSelected}
+                editType={editType}
+                hasEdit={hasEdit}
+                onSelect={() => onSelectPage(pageNum)}
+              />
             </div>
-
-            {/* Page number + edit dot */}
-            <div className="mt-0.5 flex items-center justify-center gap-1">
-              {hasEdit && (
-                <div
-                  className={cn(
-                    "h-1.5 w-1.5 rounded-full",
-                    editType?.hasProgram && editType?.hasVisual
-                      ? "bg-purple-500"
-                      : editType?.hasProgram
-                        ? "bg-green-500"
-                        : "bg-blue-500",
-                  )}
-                />
-              )}
-              <span
-                className={cn(
-                  "text-[10px] tabular-nums",
-                  isSelected ? "text-blue-500 font-medium" : "text-muted-foreground",
-                )}
-              >
-                {pageNum}
-              </span>
-            </div>
-          </button>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+    </ScrollArea>
   );
 }
