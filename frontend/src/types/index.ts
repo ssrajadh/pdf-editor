@@ -98,3 +98,22 @@ export interface PageEditType {
   hasProgram: boolean;
   hasVisual: boolean;
 }
+
+export interface PageSnapshotResponse {
+  step: number;
+  timestamp: string;
+  prompt: string | null;
+  plan_summary: string | null;
+  operations_summary: OperationResult[] | null;
+  image_url: string;
+  text_layer_source: string;
+  is_current: boolean;
+}
+
+export interface PageHistoryResponse {
+  session_id: string;
+  page_num: number;
+  current_step: number;
+  total_steps: number;
+  snapshots: PageSnapshotResponse[];
+}

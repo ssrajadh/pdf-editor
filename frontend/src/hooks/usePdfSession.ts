@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import type {
   Session,
   ChatMessage,
@@ -6,11 +6,14 @@ import type {
   ExecutionResult,
   ExecutionPlan,
   PageEditType,
+  PageHistoryResponse,
 } from "../types";
 import {
   uploadPdf as apiUploadPdf,
   getPageImageUrl,
   previewPlan as apiPreviewPlan,
+  getPageHistory as apiGetPageHistory,
+  revertToStep as apiRevertToStep,
 } from "../services/api";
 import { useWebSocket } from "./useWebSocket";
 
@@ -30,9 +33,12 @@ export function usePdfSession() {
   const [uploading, setUploading] = useState(false);
   const [editCount, setEditCount] = useState(0);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [pageHistories, setPageHistories] = useState<Record<number, PageHistoryResponse>>({});
+  const [isReverting, setIsReverting] = useState(false);
   const sessionStartRef = useRef<number | null>(null);
 
   const currentPlanRef = useRef<ExecutionPlan | null>(null);
+  const fetchHistoryRef = useRef<(page: number) => void>(() => {});
 
   const appendMsg = useCallback((page: number, msg: ChatMessage) => {
     setChatMessages((prev) => ({
@@ -124,6 +130,9 @@ export function usePdfSession() {
         result,
         plan: plan ?? undefined,
       });
+
+      // Refresh history after edit
+      fetchHistoryRef.current(page);
     },
     [appendMsg, removeProgressMsgs],
   );
@@ -165,6 +174,7 @@ export function usePdfSession() {
       setPageVersions({});
       setPageEditTypes({});
       setChatMessages({});
+      setPageHistories({});
       setEditProgress(null);
       setEditCount(0);
       sessionStartRef.current = Date.now();
@@ -273,6 +283,56 @@ export function usePdfSession() {
     wsSendEdit(last.page, last.prompt);
   }, [isEditing, wsSendEdit]);
 
+  const fetchPageHistory = useCallback(
+    async (pageNum: number) => {
+      if (!session) return;
+      try {
+        const history = await apiGetPageHistory(session.session_id, pageNum);
+        setPageHistories((prev) => ({ ...prev, [pageNum]: history }));
+      } catch {
+        // silently ignore — history panel just won't show
+      }
+    },
+    [session],
+  );
+
+  // Keep ref in sync for use in handleComplete (defined before fetchPageHistory)
+  fetchHistoryRef.current = fetchPageHistory;
+
+  const revertToStep = useCallback(
+    async (pageNum: number, step: number) => {
+      if (!session || isReverting) return;
+      setIsReverting(true);
+      try {
+        await apiRevertToStep(session.session_id, pageNum, step);
+
+        // Update version to the reverted step
+        setPageVersions((prev) => ({ ...prev, [pageNum]: step }));
+
+        // Add a system message in chat
+        appendMsg(pageNum, {
+          id: nextId(),
+          role: "assistant",
+          content: `Reverted to step ${step}`,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Refresh history
+        await fetchPageHistory(pageNum);
+      } catch (err) {
+        appendMsg(pageNum, {
+          id: nextId(),
+          role: "assistant",
+          content: `Error: ${err instanceof Error ? err.message : "Revert failed"}`,
+          timestamp: new Date().toISOString(),
+        });
+      } finally {
+        setIsReverting(false);
+      }
+    },
+    [session, isReverting, appendMsg, fetchPageHistory],
+  );
+
   const currentPageVersion = pageVersions[currentPage];
 
   const getImageUrl = useCallback(
@@ -283,6 +343,16 @@ export function usePdfSession() {
     },
     [session, pageVersions],
   );
+
+  // Auto-fetch history when page changes and has edits
+  useEffect(() => {
+    const v = pageVersions[currentPage];
+    if (session && v !== undefined && v > 0) {
+      fetchPageHistory(currentPage);
+    }
+  }, [session, currentPage, pageVersions, fetchPageHistory]);
+
+  const currentHistory = pageHistories[currentPage] ?? null;
 
   const currentMessages = useMemo(
     () => chatMessages[currentPage] ?? [],
@@ -300,9 +370,11 @@ export function usePdfSession() {
     pageEditTypes,
     currentPageVersion,
     currentMessages,
+    currentHistory,
     editProgress,
     isEditing,
     isPreviewing,
+    isReverting,
     isConnected,
     isReconnecting,
     uploading,
@@ -316,6 +388,8 @@ export function usePdfSession() {
     previewPlan,
     executePlanEdit,
     retryLastEdit,
+    revertToStep,
+    fetchPageHistory,
     getImageUrl,
     setSession,
     setUploadError,

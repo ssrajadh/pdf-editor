@@ -1,4 +1,4 @@
-import type { Session, PageTextResponse, ExecutionPlan } from "../types";
+import type { Session, PageTextResponse, ExecutionPlan, PageHistoryResponse, PageSnapshotResponse } from "../types";
 
 const API_BASE = "/api";
 
@@ -73,6 +73,44 @@ export async function previewPlan(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "Plan preview failed");
+  }
+
+  return res.json();
+}
+
+export async function getPageHistory(
+  sessionId: string,
+  pageNum: number,
+): Promise<PageHistoryResponse> {
+  const res = await fetch(
+    `${API_BASE}/edit/${sessionId}/page/${pageNum}/history`,
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Failed to get page history");
+  }
+
+  return res.json();
+}
+
+export async function revertToStep(
+  sessionId: string,
+  pageNum: number,
+  step: number,
+): Promise<PageSnapshotResponse> {
+  const res = await fetch(
+    `${API_BASE}/edit/${sessionId}/page/${pageNum}/revert`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ step }),
+    },
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Revert failed");
   }
 
   return res.json();

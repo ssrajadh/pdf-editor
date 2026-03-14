@@ -19,9 +19,11 @@ function App() {
     pageEditTypes,
     currentPageVersion,
     currentMessages,
+    currentHistory,
     editProgress,
     isEditing,
     isPreviewing,
+    isReverting,
     isReconnecting,
     uploading,
     uploadError,
@@ -32,6 +34,7 @@ function App() {
     previewPlan,
     executePlanEdit,
     retryLastEdit,
+    revertToStep,
     getImageUrl,
     setSession,
     setUploadError,
@@ -67,22 +70,29 @@ function App() {
       if (mod && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         const v = pageVersions[currentPage];
-        if (v !== undefined && v > 0) {
-          // TODO: wire to revert API when history is exposed to frontend
-          toast({ description: `Undo: revert page ${currentPage} to step ${v - 1}` });
+        if (v !== undefined && v > 0 && !isReverting) {
+          revertToStep(currentPage, v - 1);
+          toast({ description: `Undoing last edit on page ${currentPage}` });
         }
       }
 
       // Cmd/Ctrl+Shift+Z: redo (go forward one step)
       if (mod && e.key === "z" && e.shiftKey) {
         e.preventDefault();
-        // TODO: wire to redo API when history is exposed to frontend
-        toast({ description: `Redo not yet available` });
+        const history = currentHistory;
+        if (history && !isReverting) {
+          const maxStep = history.total_steps - 1;
+          const v = pageVersions[currentPage] ?? 0;
+          if (v < maxStep) {
+            revertToStep(currentPage, v + 1);
+            toast({ description: `Redoing to step ${v + 1} on page ${currentPage}` });
+          }
+        }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [session, currentPage, selectPage, pageVersions]);
+  }, [session, currentPage, selectPage, pageVersions, isReverting, revertToStep, currentHistory]);
 
   const handleExport = useCallback(async () => {
     if (!session || exporting) return;
@@ -186,10 +196,13 @@ function App() {
               currentPage={currentPage}
               isEditing={isEditing}
               isPreviewing={isPreviewing}
+              history={currentHistory}
+              isReverting={isReverting}
               onSendEdit={sendEdit}
               onPreviewPlan={previewPlan}
               onExecutePlan={executePlanEdit}
               onRetry={retryLastEdit}
+              onRevert={(step) => revertToStep(currentPage, step)}
             />
           </div>
         </div>

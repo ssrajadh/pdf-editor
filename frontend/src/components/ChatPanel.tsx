@@ -8,19 +8,23 @@ import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import type { ChatMessage } from "@/types";
+import type { ChatMessage, PageHistoryResponse } from "@/types";
 import ResultCard from "./ResultCard";
 import PlanPreviewCard from "./PlanPreviewCard";
+import EditHistory from "./EditHistory";
 
 interface Props {
   messages: ChatMessage[];
   currentPage: number;
   isEditing: boolean;
   isPreviewing?: boolean;
+  history?: PageHistoryResponse | null;
+  isReverting?: boolean;
   onSendEdit: (prompt: string) => void;
   onPreviewPlan?: (prompt: string) => void;
   onExecutePlan?: (prompt: string) => void;
   onRetry?: () => void;
+  onRevert?: (step: number) => void;
 }
 
 const SUGGESTION_CHIPS = [
@@ -34,10 +38,13 @@ export default function ChatPanel({
   currentPage,
   isEditing,
   isPreviewing,
+  history,
+  isReverting,
   onSendEdit,
   onPreviewPlan,
   onExecutePlan,
   onRetry,
+  onRevert,
 }: Props) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -93,6 +100,18 @@ export default function ChatPanel({
         )}
       </div>
       <Separator className="mt-2" />
+
+      {/* ---- History timeline ---- */}
+      {history && history.total_steps > 1 && onRevert && (
+        <>
+          <EditHistory
+            history={history}
+            isReverting={isReverting ?? false}
+            onRevert={onRevert}
+          />
+          <Separator />
+        </>
+      )}
 
       {/* ---- Progress bar (indeterminate) ---- */}
       {isEditing && (
