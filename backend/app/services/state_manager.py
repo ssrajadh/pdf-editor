@@ -179,16 +179,15 @@ class StateManager:
     ):
         """Create the initial snapshot (step 0) for a page from the original PDF.
 
-        Called when a PDF is first uploaded and pages are rendered.
-        Also saves a copy of the working PDF for step 0.
+        Stores the page as a single-page PDF for future restoration.
         """
         session_path = self.session_manager.get_session_path(session_id)
         pdf_path = session_path / "original.pdf"
 
         page_hash = _hash_pdf_page(pdf_path, page_num)
 
-        # Save a copy of the working PDF for step 0
-        self.session_manager.save_working_pdf_copy(session_id, 0)
+        # Store the single page as a one-page PDF
+        self.session_manager.save_page_pdf(session_id, page_num, 0)
 
         snapshot = PageSnapshot(
             step=0,
@@ -220,18 +219,20 @@ class StateManager:
     ):
         """Push a new snapshot after a successful edit.
 
-        Also saves a copy of the working PDF at this step.
+        Stores the page as a single-page PDF for future restoration.
         """
         stack = self.get_stack(session_id, page_num)
         new_step = stack.current_step + 1
 
         session_path = self.session_manager.get_session_path(session_id)
         working_pdf = session_path / "working.pdf"
-        pdf_for_hash = working_pdf if working_pdf.exists() else session_path / "original.pdf"
+        pdf_for_hash = (
+            working_pdf if working_pdf.exists() else session_path / "original.pdf"
+        )
         page_hash = _hash_pdf_page(pdf_for_hash, page_num)
 
-        # Save a copy of the working PDF at this step
-        self.session_manager.save_working_pdf_copy(session_id, new_step)
+        # Store the single page as a one-page PDF
+        self.session_manager.save_page_pdf(session_id, page_num, new_step)
 
         snapshot = PageSnapshot(
             step=new_step,
@@ -249,32 +250,41 @@ class StateManager:
         stack.push(snapshot)
 
     def restore_to_step(
-        self, session_id: str, page_num: int, step: int
+        self, session_id: str, page_num: int, step: int,
     ) -> PageSnapshot:
         """Restore a page to a previous state.
 
-        1. Get the target snapshot
-        2. Restore the working PDF from the stored copy
-        3. Update the current pointer (keep future snapshots)
-        4. Return the restored snapshot
+        1. Validate the step exists
+        2. Replace ONLY this page in working.pdf from the stored per-page PDF
+           (other pages are untouched)
+        3. Update the current pointer (keep future snapshots for re-advance)
+        4. Update metadata version pointer
+        5. Return the restored snapshot
         """
         stack = self.get_stack(session_id, page_num)
         target = stack.get(step)
         if target is None:
-            raise ValueError(
-                f"Step {step} not found for page {page_num}"
-            )
+            raise ValueError(f"Step {step} not found for page {page_num}")
 
-        # Restore the working PDF from the stored copy
-        self.session_manager.restore_working_pdf_from_step(session_id, step)
+        # Replace only this page in working.pdf
+        self.session_manager.restore_page_in_working_pdf(
+            session_id, page_num, step,
+        )
 
-        # Move the current pointer (don't delete future snapshots)
+        # Move the current pointer (future snapshots are kept but will be
+        # truncated on the next push — standard undo behaviour)
         stack.set_current(step)
+
+        # Sync metadata version pointer so the rest of the system
+        # (orchestrator, export, text-layer endpoint) stays consistent
+        metadata = self.session_manager.get_metadata(session_id)
+        metadata["current_page_versions"][str(page_num)] = step
+        self.session_manager.update_metadata(session_id, metadata)
 
         return target
 
     def get_conversation_context(
-        self, session_id: str, page_num: int
+        self, session_id: str, page_num: int,
     ) -> list[dict]:
         """Get the conversation history for a page from the current snapshot."""
         stack = self.get_stack(session_id, page_num)

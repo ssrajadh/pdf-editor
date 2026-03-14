@@ -93,14 +93,48 @@ async def upload_pdf(file: UploadFile = File(...)):
 async def get_page_image(
     session_id: str,
     page_num: int,
-    v: Optional[int] = Query(None, description="Specific version to retrieve; omit for latest"),
+    v: Optional[int] = Query(None, description="Specific version to retrieve (legacy)"),
+    step: Optional[int] = Query(None, description="State-stack step number"),
 ):
-    """Return the rendered PNG image for a page."""
+    """Return the rendered PNG image for a page.
+
+    Resolution order:
+    1. ?step=N  — serve from the state-stack snapshot at step N
+    2. ?v=N     — serve the version-specific file (legacy)
+    3. default  — current step's image from state stack, fallback to latest version
+    """
     try:
         session_path = session_mgr.get_session_path(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # --- step-based lookup via state stack ---
+    if step is not None or v is None:
+        try:
+            stack = state_mgr.get_stack(session_id, page_num)
+            if stack.snapshots:
+                if step is not None:
+                    snap = stack.get(step)
+                    if snap is None:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Step {step} not found for page {page_num}",
+                        )
+                else:
+                    snap = stack.current
+
+                from pathlib import Path as _P
+                img = _P(snap.image_filename)
+                if img.exists():
+                    return FileResponse(
+                        img,
+                        media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=3600"},
+                    )
+        except (IndexError, KeyError):
+            pass  # fall through to version-based lookup
+
+    # --- version-based lookup (legacy / fallback) ---
     version = str(v) if v is not None else "latest"
     try:
         image_path = pdf_service.get_page_image_path(session_path, page_num, version)

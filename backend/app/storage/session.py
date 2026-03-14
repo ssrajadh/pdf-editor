@@ -97,6 +97,68 @@ class SessionManager:
             )
         shutil.copy2(source, session_path / "working.pdf")
 
+    def save_page_pdf(self, session_id: str, page_num: int, step: int) -> Path:
+        """Extract a single page from working/original PDF and store it.
+
+        Saves to history/page_{page_num}/step_{step}_page.pdf as a one-page PDF.
+        """
+        import fitz
+
+        session_path = self.get_session_path(session_id)
+        history_path = self.get_history_path(session_id, page_num)
+
+        working = session_path / "working.pdf"
+        source = working if working.exists() else session_path / "original.pdf"
+
+        doc = fitz.open(str(source))
+        single = fitz.open()
+        single.insert_pdf(doc, from_page=page_num - 1, to_page=page_num - 1)
+
+        dest = history_path / f"step_{step}_page.pdf"
+        single.save(str(dest))
+        single.close()
+        doc.close()
+
+        return dest
+
+    def restore_page_in_working_pdf(
+        self, session_id: str, page_num: int, step: int,
+    ) -> None:
+        """Replace a single page in working.pdf with the stored step page.
+
+        Only touches the target page — other pages remain unchanged.
+        """
+        import fitz
+
+        session_path = self.get_session_path(session_id)
+        history_path = self.get_history_path(session_id, page_num)
+
+        stored_path = history_path / f"step_{step}_page.pdf"
+        if not stored_path.exists():
+            raise FileNotFoundError(
+                f"No stored page PDF for page {page_num} step {step} "
+                f"in session {session_id}"
+            )
+
+        working = session_path / "working.pdf"
+        if not working.exists():
+            shutil.copy2(session_path / "original.pdf", working)
+
+        doc = fitz.open(str(working))
+        stored = fitz.open(str(stored_path))
+
+        page_idx = page_num - 1  # fitz is 0-indexed
+        doc.delete_page(page_idx)
+        doc.insert_pdf(stored, from_page=0, to_page=0, start_at=page_idx)
+
+        # PyMuPDF can't save non-incrementally to the same file it opened.
+        # Save to a temp file, then replace.
+        tmp = working.with_suffix(".tmp.pdf")
+        doc.save(str(tmp), deflate=True)
+        doc.close()
+        stored.close()
+        shutil.move(str(tmp), str(working))
+
     def cleanup_session(self, session_id: str) -> None:
         """Delete all session data."""
         path = self._storage_path / session_id

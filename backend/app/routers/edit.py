@@ -7,9 +7,18 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from app.config import settings
-from app.models.schemas import EditResult, EditVersion, ExecutionPlan, PlanPreviewRequest
+from app.models.schemas import (
+    EditResult,
+    EditVersion,
+    ExecutionPlan,
+    PageHistoryResponse,
+    PageSnapshotResponse,
+    PlanPreviewRequest,
+    RevertRequest,
+)
 from app.services.edit_engine import EditEngine
 from app.services.model_provider import ProviderFactory
+from app.services.state_manager import StateManager
 from app.storage.session import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -27,6 +36,32 @@ edit_engine = EditEngine(
     session_manager=session_mgr,
     model_provider=_provider,
 )
+
+state_mgr = StateManager(session_mgr)
+
+
+def _snapshot_to_response(
+    snap, session_id: str, page_num: int, is_current: bool,
+) -> PageSnapshotResponse:
+    """Convert an internal PageSnapshot to an API response."""
+    ops = None
+    if snap.execution_result and snap.execution_result.operations:
+        ops = snap.execution_result.operations
+
+    image_url = (
+        f"/api/pdf/{session_id}/page/{page_num}/image?step={snap.step}"
+    )
+
+    return PageSnapshotResponse(
+        step=snap.step,
+        timestamp=snap.timestamp,
+        prompt=snap.prompt,
+        plan_summary=snap.plan_summary,
+        operations_summary=ops,
+        image_url=image_url,
+        text_layer_source=snap.text_layer_source,
+        is_current=is_current,
+    )
 
 
 @router.websocket("/ws/{session_id}")
@@ -151,26 +186,82 @@ async def plan_preview(
         raise HTTPException(status_code=500, detail="Plan preview failed")
 
 
+# ------------------------------------------------------------------
+# History endpoint — returns state-stack snapshots
+# ------------------------------------------------------------------
+
+
 @router.get(
     "/{session_id}/page/{page_num}/history",
-    response_model=list[EditVersion],
+    response_model=PageHistoryResponse,
 )
-async def get_edit_history(session_id: str, page_num: int):
-    """Return the edit history for a page."""
+async def get_page_history(session_id: str, page_num: int):
+    """Return the full snapshot history for a page."""
     try:
         session_mgr.get_session_path(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    return await edit_engine.get_edit_history(session_id, page_num)
+    stack = state_mgr.get_stack(session_id, page_num)
+    current_step = stack.current_step
+
+    snapshots = [
+        _snapshot_to_response(snap, session_id, page_num, snap.step == current_step)
+        for snap in stack.history
+    ]
+
+    return PageHistoryResponse(
+        session_id=session_id,
+        page_num=page_num,
+        current_step=current_step,
+        total_steps=len(stack.snapshots),
+        snapshots=snapshots,
+    )
+
+
+# ------------------------------------------------------------------
+# Revert endpoint — restore to any step
+# ------------------------------------------------------------------
+
+
+@router.post(
+    "/{session_id}/page/{page_num}/revert",
+    response_model=PageSnapshotResponse,
+)
+async def revert_page(
+    session_id: str, page_num: int, body: RevertRequest,
+):
+    """Revert a page to a previous step.
+
+    Restores only this page in the working PDF — other pages are untouched.
+    Returns the restored snapshot.
+    """
+    try:
+        session_mgr.get_session_path(session_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        restored = state_mgr.restore_to_step(session_id, page_num, body.step)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    return _snapshot_to_response(restored, session_id, page_num, is_current=True)
+
+
+# ------------------------------------------------------------------
+# Legacy revert endpoint — kept for backward compatibility
+# ------------------------------------------------------------------
 
 
 @router.post(
     "/{session_id}/page/{page_num}/revert/{version}",
     response_model=EditResult,
 )
-async def revert_page(session_id: str, page_num: int, version: int):
-    """Revert a page to a previous version."""
+async def revert_page_legacy(session_id: str, page_num: int, version: int):
+    """Revert a page to a previous version (legacy endpoint)."""
     try:
         session_mgr.get_session_path(session_id)
     except FileNotFoundError:
