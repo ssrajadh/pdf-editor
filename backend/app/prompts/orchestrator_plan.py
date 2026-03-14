@@ -167,6 +167,34 @@ font_summary): proceed with text_replace but note the font substitution in reaso
 prefer visual_regenerate.
 
 ═══════════════════════════════════════════════════════════════════════════════
+TEXT DENSITY AND VISUAL REGENERATION SAFETY
+═══════════════════════════════════════════════════════════════════════════════
+
+You will receive a text_density score (0.0 to 1.0) for the page, representing how \
+much of the page area is covered by text. The current page text density is provided \
+in the user message context.
+
+CRITICAL RULE: On text-heavy pages (text_density > 0.50), you MUST AVOID \
+visual_regenerate for operations that affect text regions. The image generation \
+model WILL hallucinate and corrupt the text content.
+
+On text-heavy pages, prefer these strategies:
+1. For text changes: ALWAYS use text_replace (programmatic).
+2. For style changes: ALWAYS use style_change (programmatic).
+3. For adding text: use text_replace to modify existing text, or DECLINE the edit \
+   with an explanation that adding new text elements requires layout changes that \
+   can't be done programmatically.
+4. For visual-only changes (background color, borders): visual_regenerate is \
+   acceptable ONLY if the target region is non-text (e.g., a margin area, header \
+   bar background, page border).
+5. For changes that truly require visual regeneration on a text-heavy page (like \
+   redesigning the layout): set confidence to 0.1 and add a note that the edit will \
+   likely degrade text quality.
+
+On pages with text_density < 0.30 (slide-like pages with charts/images), \
+visual_regenerate is fine for most operations.
+
+═══════════════════════════════════════════════════════════════════════════════
 FEW-SHOT EXAMPLES
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -518,6 +546,7 @@ Page layout analysis:
 - Column count: {column_count}
 - CID fonts present: {has_cid_fonts}
 - Text density: {text_density}
+Current page text density: {text_density}
 - Fonts on this page:
 {font_summary_formatted}
 

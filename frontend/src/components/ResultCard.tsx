@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronRight, Check, AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -16,6 +17,7 @@ function fmtTime(ms: number): string {
 }
 
 function opIcon(op: OperationResult): string {
+  if (op.path === "blocked") return "🛑";
   if (op.path === "fallback_visual") return "⚠️";
   if (op.path === "programmatic") return "⚡";
   return "🎨";
@@ -95,7 +97,12 @@ function OperationRows({ ops }: { ops: OperationResult[] }) {
             <span className="mt-[1px] text-[13px] leading-none shrink-0">
               {opIcon(op)}
             </span>
-            <span className="flex-1 min-w-0 text-[12px] truncate">
+            <span
+              className={cn(
+                "flex-1 min-w-0 text-[12px] truncate",
+                op.path === "blocked" && "text-red-400",
+              )}
+            >
               {opDescription(op)}
             </span>
             <Badge
@@ -244,11 +251,22 @@ function PlanOpDetail({ op, idx }: { op: PlanOperation; idx: number }) {
    Main export: ResultCard
    ================================================================ */
 
-export default function ResultCard({ message }: { message: ChatMessage }) {
+export default function ResultCard({
+  message,
+  onForceEdit,
+}: {
+  message: ChatMessage;
+  onForceEdit?: (prompt: string) => void;
+}) {
   const result = message.result!;
   const plan = message.plan;
   const allProg =
     result.visual_count === 0 && result.programmatic_count > 0;
+  const onlyBlocked =
+    result.blocked_count > 0 &&
+    result.programmatic_count === 0 &&
+    result.visual_count === 0;
+  const blockedOps = result.operations.filter((op) => op.path === "blocked");
 
   return (
     <div className="flex justify-start">
@@ -266,12 +284,60 @@ export default function ResultCard({ message }: { message: ChatMessage }) {
         )}
 
         <div className="px-3 py-2.5 space-y-2">
+          {blockedOps.length > 0 && (
+            <div className="space-y-2">
+              {blockedOps.map((op, idx) => {
+                const density =
+                  op.risk_assessment?.text_density !== undefined
+                    ? Math.round(op.risk_assessment.text_density * 100)
+                    : null;
+                const canOverride =
+                  op.risk_assessment?.override_available &&
+                  Boolean(message.editPrompt);
+
+                return (
+                  <Card
+                    key={`blocked-${idx}`}
+                    className="border-destructive/30 bg-destructive/5 px-3 py-2"
+                  >
+                    <div className="text-[12px] font-medium text-red-400">
+                      🛑 Visual edit blocked
+                      {density !== null && (
+                        <span className="text-red-400/80">
+                          {" "}— this page is {density}% text
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      AI regeneration would corrupt the text content.
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Suggestion: try rephrasing as a text or style change.
+                    </p>
+                    {canOverride && (
+                      <div className="pt-1">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="h-7 px-2 text-[11px]"
+                          onClick={() => message.editPrompt && onForceEdit?.(message.editPrompt)}
+                        >
+                          Override and proceed anyway
+                        </Button>
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+
           {/* Summary */}
           <div className="flex items-center gap-2">
             <span className="text-[13px]">
-              Edit applied
+              {onlyBlocked ? "Edit blocked" : "Edit applied"}
             </span>
-            <TimeBadge result={result} />
+            {!onlyBlocked && <TimeBadge result={result} />}
           </div>
 
           {/* Plan summary text */}

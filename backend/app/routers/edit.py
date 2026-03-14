@@ -69,7 +69,7 @@ def _snapshot_to_response(
 async def edit_websocket(websocket: WebSocket, session_id: str):
     """WebSocket endpoint for submitting edits and receiving progress.
 
-    Client sends:  {"type": "edit", "page_num": 1, "prompt": "..."}
+    Client sends:  {"type": "edit", "page_num": 1, "prompt": "...", "force_visual": false}
     Server sends:
       {"type": "progress", "stage": "planning", "message": "..."}
       {"type": "progress", "stage": "planned", "message": "...", "plan": {...}}
@@ -121,6 +121,7 @@ async def edit_websocket(websocket: WebSocket, session_id: str):
 
             page_num = msg.get("page_num")
             prompt = msg.get("prompt")
+            force_visual = bool(msg.get("force_visual", False))
             if not page_num or not prompt:
                 await websocket.send_json({
                     "type": "error",
@@ -130,7 +131,7 @@ async def edit_websocket(websocket: WebSocket, session_id: str):
 
             try:
                 result = await edit_engine.execute_edit(
-                    session_id, int(page_num), prompt, send_progress,
+                    session_id, int(page_num), prompt, send_progress, force_visual,
                 )
                 await websocket.send_json({
                     "type": "complete",

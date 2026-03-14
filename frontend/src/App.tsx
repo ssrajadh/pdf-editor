@@ -31,6 +31,7 @@ function App() {
     uploadPdf,
     selectPage,
     sendEdit,
+    forceVisualEdit,
     previewPlan,
     executePlanEdit,
     retryLastEdit,
@@ -199,6 +200,7 @@ function App() {
               history={currentHistory}
               isReverting={isReverting}
               onSendEdit={sendEdit}
+              onForceEdit={forceVisualEdit}
               onPreviewPlan={previewPlan}
               onExecutePlan={executePlanEdit}
               onRetry={retryLastEdit}

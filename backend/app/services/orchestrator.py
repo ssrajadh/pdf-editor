@@ -18,6 +18,7 @@ from app.models.schemas import (
     FontInfo,
     OperationResult,
     OperationType,
+    RegenRiskAssessment,
     TextBlock,
     TextReplaceOp,
     StyleChangeOp,
@@ -341,6 +342,65 @@ def format_font_summary(fonts: list[FontInfo]) -> str:
     return "\n".join(lines)
 
 
+def _normalize_region(region: str | None) -> str:
+    if not region:
+        return "full_page"
+    return region.strip().lower().replace(" ", "_")
+
+
+def _resolve_region_bounds(
+    region: str | None,
+    page_width: float,
+    page_height: float,
+) -> tuple[float, float, float, float, str]:
+    """Resolve a region descriptor to page-space bounds (x0, y0, x1, y1)."""
+    key = _normalize_region(region)
+
+    full_keys = {"full_page", "full", "page", "entire_page", "whole_page"}
+    if key in full_keys:
+        return 0.0, 0.0, page_width, page_height, "full_page"
+
+    if "header" in key or "title" in key:
+        return 0.0, 0.0, page_width, page_height * 0.18, "header_area"
+
+    if "footer" in key:
+        return 0.0, page_height * 0.82, page_width, page_height, "footer_area"
+
+    if "top" in key and "third" in key:
+        return 0.0, 0.0, page_width, page_height / 3, "top_third"
+    if "middle" in key and "third" in key:
+        return 0.0, page_height / 3, page_width, page_height * 2 / 3, "middle_third"
+    if "bottom" in key and "third" in key:
+        return 0.0, page_height * 2 / 3, page_width, page_height, "bottom_third"
+
+    if "top" in key and "half" in key:
+        return 0.0, 0.0, page_width, page_height / 2, "top_half"
+    if "bottom" in key and "half" in key:
+        return 0.0, page_height / 2, page_width, page_height, "bottom_half"
+    if "left" in key and "half" in key:
+        return 0.0, 0.0, page_width / 2, page_height, "left_half"
+    if "right" in key and "half" in key:
+        return page_width / 2, 0.0, page_width, page_height, "right_half"
+
+    if "left" in key and "third" in key:
+        return 0.0, 0.0, page_width / 3, page_height, "left_third"
+    if "center" in key and "third" in key:
+        return page_width / 3, 0.0, page_width * 2 / 3, page_height, "center_third"
+    if "right" in key and "third" in key:
+        return page_width * 2 / 3, 0.0, page_width, page_height, "right_third"
+
+    if "top" in key:
+        return 0.0, 0.0, page_width, page_height / 3, "top_region"
+    if "bottom" in key:
+        return 0.0, page_height * 2 / 3, page_width, page_height, "bottom_region"
+    if "left" in key:
+        return 0.0, 0.0, page_width / 2, page_height, "left_region"
+    if "right" in key:
+        return page_width / 2, 0.0, page_width, page_height, "right_region"
+
+    return 0.0, 0.0, page_width, page_height, "full_page"
+
+
 # ---------------------------------------------------------------------------
 # Plan JSON parsing
 # ---------------------------------------------------------------------------
@@ -639,6 +699,106 @@ class Orchestrator:
         return image, source
 
     # ------------------------------------------------------------------
+    # Visual regeneration safety
+    # ------------------------------------------------------------------
+
+    def _assess_visual_regen_risk(
+        self,
+        session_id: str,
+        page_num: int,
+        operation: VisualRegenerateOp,
+    ) -> RegenRiskAssessment:
+        """Analyze the risk of visual regeneration on this page/region."""
+        import pdfplumber
+
+        session_path = self.sessions.get_session_path(session_id)
+        working_pdf = session_path / "working.pdf"
+        pdf_path = working_pdf if working_pdf.exists() else session_path / "original.pdf"
+
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[page_num - 1]
+            page_width = float(page.width)
+            page_height = float(page.height)
+
+            x0, y0, x1, y1, region_label = _resolve_region_bounds(
+                operation.region, page_width, page_height,
+            )
+            region_area = max(0.0, (x1 - x0) * (y1 - y0))
+
+            words = page.extract_words() or []
+
+        text_area = 0.0
+        text_block_count = 0
+
+        for word in words:
+            wx0 = float(word.get("x0", 0))
+            wx1 = float(word.get("x1", 0))
+            wy0 = float(word.get("top", 0))
+            wy1 = float(word.get("bottom", 0))
+
+            ix0 = max(x0, wx0)
+            iy0 = max(y0, wy0)
+            ix1 = min(x1, wx1)
+            iy1 = min(y1, wy1)
+
+            if ix1 <= ix0 or iy1 <= iy0:
+                continue
+
+            text_block_count += 1
+            text_area += (ix1 - ix0) * (iy1 - iy0)
+
+        text_density = text_area / region_area if region_area > 0 else 0.0
+
+        if text_density > 0.60:
+            risk_level: Literal["low", "medium", "high", "critical"] = "critical"
+        elif text_density >= 0.35:
+            risk_level = "high"
+        elif text_density >= 0.15:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+
+        if text_block_count >= 50 and risk_level in ("low", "medium"):
+            risk_level = "high"
+
+        if risk_level == "low":
+            recommendation = "Low text density — visual regeneration is likely safe."
+            safe_to_proceed = True
+            override_available = False
+        elif risk_level == "medium":
+            recommendation = "Mixed content — minor text artifacts are possible."
+            safe_to_proceed = True
+            override_available = True
+        elif risk_level == "high":
+            recommendation = (
+                "Text-heavy region — visual regeneration is likely to degrade text. "
+                "Prefer text_replace or style_change, or use override if necessary."
+            )
+            safe_to_proceed = False
+            override_available = True
+        else:
+            recommendation = (
+                "Critical text density — visual regeneration would destroy text. "
+                "Use programmatic edits instead."
+            )
+            safe_to_proceed = False
+            override_available = False
+
+        logger.info(
+            "Visual regen risk page %d (%s): density=%.2f, blocks=%d, level=%s",
+            page_num, region_label, text_density, text_block_count, risk_level,
+        )
+
+        return RegenRiskAssessment(
+            risk_level=risk_level,
+            text_density=round(text_density, 3),
+            text_block_count=text_block_count,
+            recommendation=recommendation,
+            safe_to_proceed=safe_to_proceed,
+            override_available=override_available,
+        )
+
+    # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
@@ -649,6 +809,7 @@ class Orchestrator:
         plan: ExecutionPlan,
         instruction: str,
         on_progress: ProgressCallback,
+        force_visual: bool = False,
     ) -> ExecutionResult:
         """Execute a plan's operations in order.
 
@@ -683,7 +844,12 @@ class Orchestrator:
         # Execute text_replace batch
         if text_replace_batch:
             batch_results = await self._execute_text_replace_batch(
-                text_replace_batch, session_id, page_num, instruction, on_progress,
+                text_replace_batch,
+                session_id,
+                page_num,
+                instruction,
+                on_progress,
+                force_visual,
             )
             for result in batch_results:
                 if result.path == "programmatic" and result.success:
@@ -699,7 +865,13 @@ class Orchestrator:
 
             if isinstance(op, (TextReplaceOp, StyleChangeOp)):
                 result = await self._execute_programmatic(
-                    op, op_idx, session_id, page_num, instruction, on_progress,
+                    op,
+                    op_idx,
+                    session_id,
+                    page_num,
+                    instruction,
+                    on_progress,
+                    force_visual,
                 )
                 if result.path == "programmatic" and result.success:
                     programmatic_ran = True
@@ -708,6 +880,50 @@ class Orchestrator:
                     visual_ran = True
 
             elif isinstance(op, VisualRegenerateOp):
+                if not force_visual:
+                    risk = self._assess_visual_regen_risk(session_id, page_num, op)
+                    if risk.risk_level in ("critical", "high"):
+                        await on_progress(
+                            "blocked",
+                            (
+                                f"Visual edit blocked: this page is {risk.text_density:.0%} text. "
+                                "AI regeneration would degrade the text content. "
+                                "Try rephrasing as a text or style change instead."
+                            ),
+                            {"op_index": op_idx},
+                        )
+                        result = OperationResult(
+                            op_index=op_idx,
+                            op_type=OperationType.VISUAL_REGENERATE,
+                            success=False,
+                            time_ms=0,
+                            path="blocked",
+                            detail=(
+                                f"Blocked: text density {risk.text_density:.0%} "
+                                f"({risk.risk_level} risk)"
+                            ),
+                            error=risk.recommendation,
+                            risk_assessment=risk,
+                        )
+                        op_results.append(result)
+                        continue
+
+                    if risk.risk_level == "medium":
+                        await on_progress(
+                            "caution",
+                            (
+                                f"Note: this region contains some text ({risk.text_density:.0%}). "
+                                "Minor text artifacts are possible."
+                            ),
+                            {"op_index": op_idx},
+                        )
+                else:
+                    await on_progress(
+                        "warning",
+                        "Override enabled — proceeding with visual regeneration without text safety checks.",
+                        {"op_index": op_idx},
+                    )
+
                 metadata = self.sessions.get_metadata(session_id)
                 cur_v = int(
                     metadata.get("current_page_versions", {}).get(str(page_num), 0)
@@ -715,6 +931,7 @@ class Orchestrator:
                 result = await self._execute_visual(
                     op, op_idx, session_id, page_num, cur_v + 1,
                     on_progress, programmatic_ran,
+                    override_applied=force_visual,
                 )
                 if result.success:
                     visual_ran = True
@@ -724,26 +941,66 @@ class Orchestrator:
             result.time_ms = int((time.monotonic() - t_op) * 1000)
             op_results.append(result)
 
-        # If nothing succeeded, full-page visual fallback
-        if not op_results or not any(r.success for r in op_results):
+        # If nothing succeeded, full-page visual fallback (unless blocked for safety)
+        has_blocked = any(r.path == "blocked" for r in op_results)
+        if (not op_results or not any(r.success for r in op_results)) and not has_blocked:
             logger.warning("No operations succeeded, running full-page visual fallback")
             await on_progress("generating", "Falling back to full-page AI edit...", None)
             metadata = self.sessions.get_metadata(session_id)
             cur_v = int(
                 metadata.get("current_page_versions", {}).get(str(page_num), 0)
             )
-            fallback_result = await self._execute_visual(
-                VisualRegenerateOp(
-                    prompt=instruction, region="full_page", confidence=0.7,
-                    reasoning="Full fallback — no operations succeeded.",
-                ),
-                op_idx=-1, session_id=session_id, page_num=page_num,
-                version=cur_v + 1, on_progress=on_progress,
-                programmatic_preceded=False,
+            fallback_op = VisualRegenerateOp(
+                prompt=instruction, region="full_page", confidence=0.7,
+                reasoning="Full fallback — no operations succeeded.",
             )
-            fallback_result.time_ms = int((time.monotonic() - t_start) * 1000)
-            op_results.append(fallback_result)
-            visual_ran = True
+            if not force_visual:
+                risk = self._assess_visual_regen_risk(session_id, page_num, fallback_op)
+                if risk.risk_level in ("critical", "high"):
+                    await on_progress(
+                        "blocked",
+                        (
+                            f"Visual edit blocked: this page is {risk.text_density:.0%} text. "
+                            "AI regeneration would degrade the text content. "
+                            "Try rephrasing as a text or style change instead."
+                        ),
+                        None,
+                    )
+                    op_results.append(OperationResult(
+                        op_index=-1,
+                        op_type=OperationType.VISUAL_REGENERATE,
+                        success=False,
+                        time_ms=0,
+                        path="blocked",
+                        detail=(
+                            f"Blocked: text density {risk.text_density:.0%} "
+                            f"({risk.risk_level} risk)"
+                        ),
+                        error=risk.recommendation,
+                        risk_assessment=risk,
+                    ))
+                else:
+                    fallback_result = await self._execute_visual(
+                        fallback_op,
+                        op_idx=-1, session_id=session_id, page_num=page_num,
+                        version=cur_v + 1, on_progress=on_progress,
+                        programmatic_preceded=False,
+                        override_applied=False,
+                    )
+                    fallback_result.time_ms = int((time.monotonic() - t_start) * 1000)
+                    op_results.append(fallback_result)
+                    visual_ran = True
+            else:
+                fallback_result = await self._execute_visual(
+                    fallback_op,
+                    op_idx=-1, session_id=session_id, page_num=page_num,
+                    version=cur_v + 1, on_progress=on_progress,
+                    programmatic_preceded=False,
+                    override_applied=True,
+                )
+                fallback_result.time_ms = int((time.monotonic() - t_start) * 1000)
+                op_results.append(fallback_result)
+                visual_ran = True
 
         # Read final version
         metadata = self.sessions.get_metadata(session_id)
@@ -793,6 +1050,7 @@ class Orchestrator:
         vis_count = sum(
             1 for r in op_results if r.path in ("visual", "fallback_visual")
         )
+        blocked_count = sum(1 for r in op_results if r.path == "blocked")
 
         return ExecutionResult(
             session_id=session_id,
@@ -803,6 +1061,7 @@ class Orchestrator:
             total_time_ms=total_ms,
             programmatic_count=prog_count,
             visual_count=vis_count,
+            blocked_count=blocked_count,
             text_layer_source=text_layer_source,
         )
 
@@ -818,6 +1077,7 @@ class Orchestrator:
         page_num: int,
         instruction: str,
         on_progress: ProgressCallback,
+        force_visual: bool = False,
     ) -> OperationResult:
         """Execute a programmatic op via PdfEditor. Falls back to visual on failure."""
         from app.services.pdf_editor import PdfEditor
@@ -874,7 +1134,7 @@ class Orchestrator:
                     {"op_index": op_idx},
                 )
                 return await self._visual_fallback_for_programmatic(
-                    op, op_idx, session_id, page_num, on_progress,
+                    op, op_idx, session_id, page_num, on_progress, force_visual,
                 )
 
             return OperationResult(
@@ -919,7 +1179,7 @@ class Orchestrator:
                     {"op_index": op_idx},
                 )
                 return await self._visual_fallback_for_programmatic(
-                    op, op_idx, session_id, page_num, on_progress,
+                    op, op_idx, session_id, page_num, on_progress, force_visual,
                 )
 
             return OperationResult(
@@ -940,6 +1200,7 @@ class Orchestrator:
         page_num: int,
         instruction: str,
         on_progress: ProgressCallback,
+        force_visual: bool = False,
     ) -> list[OperationResult]:
         """Execute multiple text_replace ops as a single batch."""
         from app.services.pdf_editor import PdfEditor
@@ -990,7 +1251,7 @@ class Orchestrator:
                     {"op_index": op_idx},
                 )
                 fallback = await self._visual_fallback_for_programmatic(
-                    op, op_idx, session_id, page_num, on_progress,
+                    op, op_idx, session_id, page_num, on_progress, force_visual,
                 )
                 results.append(fallback)
             else:
@@ -1019,6 +1280,7 @@ class Orchestrator:
         version: int,
         on_progress: ProgressCallback,
         programmatic_preceded: bool = False,
+        override_applied: bool = False,
     ) -> OperationResult:
         """Execute a visual_regenerate operation.
 
@@ -1052,11 +1314,17 @@ class Orchestrator:
             metadata["current_page_versions"][str(page_num)] = version
             self.sessions.update_metadata(session_id, metadata)
 
+            detail_prefix = ""
+            if override_applied:
+                detail_prefix = "⚠️ Visual edit applied with override — review for text artifacts. "
+
             return OperationResult(
                 op_index=op_idx,
                 op_type=OperationType.VISUAL_REGENERATE,
                 success=True, time_ms=0, path="visual",
-                detail=f"Visual regenerate ({op.region or 'full_page'}): {op.prompt[:100]}",
+                detail=(
+                    f"{detail_prefix}Visual regenerate ({op.region or 'full_page'}): {op.prompt[:100]}"
+                ),
             )
         except Exception as e:
             logger.error("Visual op %d failed: %s", op_idx, e, exc_info=True)
@@ -1074,6 +1342,7 @@ class Orchestrator:
         session_id: str,
         page_num: int,
         on_progress: ProgressCallback,
+        force_visual: bool = False,
     ) -> OperationResult:
         """Fall back to visual editing when a programmatic op fails.
 
@@ -1091,6 +1360,55 @@ class Orchestrator:
                 f"In this PDF page, change the style of the text "
                 f"'{op.target_text}' to have these properties: {changes_desc}. "
                 f"Keep everything else exactly the same."
+            )
+
+        visual_op = VisualRegenerateOp(
+            prompt=visual_prompt,
+            region="full_page",
+            confidence=0.4,
+            reasoning="Programmatic edit failed; visual fallback required.",
+        )
+
+        if not force_visual:
+            risk = self._assess_visual_regen_risk(session_id, page_num, visual_op)
+            if risk.risk_level in ("critical", "high"):
+                await on_progress(
+                    "blocked",
+                    (
+                        f"Visual edit blocked: this page is {risk.text_density:.0%} text. "
+                        "AI regeneration would degrade the text content. "
+                        "Try rephrasing as a text or style change instead."
+                    ),
+                    {"op_index": op_idx},
+                )
+                return OperationResult(
+                    op_index=op_idx,
+                    op_type=OperationType(op.type),
+                    success=False,
+                    time_ms=0,
+                    path="blocked",
+                    detail=(
+                        f"Blocked visual fallback: text density {risk.text_density:.0%} "
+                        f"({risk.risk_level} risk)"
+                    ),
+                    error=risk.recommendation,
+                    risk_assessment=risk,
+                )
+
+            if risk.risk_level == "medium":
+                await on_progress(
+                    "caution",
+                    (
+                        f"Note: this region contains some text ({risk.text_density:.0%}). "
+                        "Minor text artifacts are possible."
+                    ),
+                    {"op_index": op_idx},
+                )
+        else:
+            await on_progress(
+                "warning",
+                "Override enabled — proceeding with visual regeneration without text safety checks.",
+                {"op_index": op_idx},
             )
 
         try:
@@ -1114,11 +1432,17 @@ class Orchestrator:
             metadata["current_page_versions"][str(page_num)] = new_version
             self.sessions.update_metadata(session_id, metadata)
 
+            detail_prefix = ""
+            if force_visual:
+                detail_prefix = "⚠️ Visual edit applied with override — review for text artifacts. "
+
             return OperationResult(
                 op_index=op_idx,
                 op_type=OperationType(op.type),
                 success=True, time_ms=0, path="fallback_visual",
-                detail=f"Programmatic {op.type} failed, visual fallback succeeded",
+                detail=(
+                    f"{detail_prefix}Programmatic {op.type} failed, visual fallback succeeded"
+                ),
             )
         except Exception as e:
             logger.error("Visual fallback for op %d failed: %s", op_idx, e)
@@ -1181,13 +1505,14 @@ class Orchestrator:
         page_num: int,
         instruction: str,
         on_progress: ProgressCallback,
+        force_visual: bool = False,
     ) -> ExecutionResult:
         """Plan then execute, and store conversation context in the state stack."""
         from datetime import datetime, timezone as _tz
 
         plan = await self.plan(session_id, page_num, instruction, on_progress)
         result = await self.execute(
-            session_id, page_num, plan, instruction, on_progress,
+            session_id, page_num, plan, instruction, on_progress, force_visual,
         )
 
         # Build conversation messages for this edit

@@ -96,12 +96,17 @@ export function useWebSocket(sessionId: string | null, handlers: Handlers) {
     };
   }, [connect]);
 
-  const sendEdit = useCallback((pageNum: number, prompt: string) => {
+  const sendEdit = useCallback((pageNum: number, prompt: string, forceVisual = false) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
     setIsEditing(true);
-    ws.send(JSON.stringify({ type: "edit", page_num: pageNum, prompt }));
+    ws.send(JSON.stringify({
+      type: "edit",
+      page_num: pageNum,
+      prompt,
+      force_visual: forceVisual,
+    }));
   }, []);
 
   return { sendEdit, isConnected, isEditing, isReconnecting };

@@ -66,7 +66,7 @@ export function usePdfSession() {
   }, []);
 
   const [editingPage, setEditingPage] = useState<number | null>(null);
-  const lastPromptRef = useRef<{ page: number; prompt: string } | null>(null);
+  const lastPromptRef = useRef<{ page: number; prompt: string; forceVisual?: boolean } | null>(null);
 
   const handleProgress = useCallback(
     (progress: EditProgress) => {
@@ -97,6 +97,7 @@ export function usePdfSession() {
       setEditProgress(null);
       const page = result.page_num;
       const plan = currentPlanRef.current;
+      const lastPrompt = lastPromptRef.current?.prompt;
       currentPlanRef.current = null;
       setEditingPage(null);
       lastPromptRef.current = null;
@@ -118,9 +119,15 @@ export function usePdfSession() {
       removeProgressMsgs(page);
 
       const allProgrammatic = result.visual_count === 0 && result.programmatic_count > 0;
-      const content = allProgrammatic
-        ? `Edit applied in ${result.total_time_ms}ms`
-        : `Edit applied in ${(result.total_time_ms / 1000).toFixed(1)}s`;
+      const onlyBlocked =
+        result.blocked_count > 0 &&
+        result.programmatic_count === 0 &&
+        result.visual_count === 0;
+      const content = onlyBlocked
+        ? "Edit blocked to protect text-heavy content"
+        : allProgrammatic
+          ? `Edit applied in ${result.total_time_ms}ms`
+          : `Edit applied in ${(result.total_time_ms / 1000).toFixed(1)}s`;
 
       appendMsg(page, {
         id: nextId(),
@@ -129,6 +136,7 @@ export function usePdfSession() {
         timestamp: new Date().toISOString(),
         result,
         plan: plan ?? undefined,
+        editPrompt: lastPrompt ?? undefined,
       });
 
       // Refresh history after edit
@@ -190,11 +198,11 @@ export function usePdfSession() {
   }, []);
 
   const sendEdit = useCallback(
-    (prompt: string) => {
+    (prompt: string, forceVisual = false) => {
       if (!session || isEditing) return;
 
       setEditingPage(currentPage);
-      lastPromptRef.current = { page: currentPage, prompt };
+      lastPromptRef.current = { page: currentPage, prompt, forceVisual };
 
       appendMsg(currentPage, {
         id: nextId(),
@@ -203,7 +211,7 @@ export function usePdfSession() {
         timestamp: new Date().toISOString(),
       });
 
-      wsSendEdit(currentPage, prompt);
+      wsSendEdit(currentPage, prompt, forceVisual);
     },
     [session, currentPage, isEditing, wsSendEdit, appendMsg],
   );
@@ -270,8 +278,8 @@ export function usePdfSession() {
       if (!session || isEditing) return;
 
       setEditingPage(currentPage);
-      lastPromptRef.current = { page: currentPage, prompt };
-      wsSendEdit(currentPage, prompt);
+      lastPromptRef.current = { page: currentPage, prompt, forceVisual: false };
+      wsSendEdit(currentPage, prompt, false);
     },
     [session, currentPage, isEditing, wsSendEdit],
   );
@@ -280,8 +288,15 @@ export function usePdfSession() {
     const last = lastPromptRef.current;
     if (!last || isEditing) return;
     setEditingPage(last.page);
-    wsSendEdit(last.page, last.prompt);
+    wsSendEdit(last.page, last.prompt, last.forceVisual ?? false);
   }, [isEditing, wsSendEdit]);
+
+  const forceVisualEdit = useCallback(
+    (prompt: string) => {
+      sendEdit(prompt, true);
+    },
+    [sendEdit],
+  );
 
   const fetchPageHistory = useCallback(
     async (pageNum: number) => {
@@ -385,6 +400,7 @@ export function usePdfSession() {
     uploadPdf,
     selectPage,
     sendEdit,
+    forceVisualEdit,
     previewPlan,
     executePlanEdit,
     retryLastEdit,

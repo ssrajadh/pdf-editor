@@ -53,6 +53,7 @@ class EditEngine:
         page_num: int,
         prompt: str,
         on_progress: ProgressCallback,
+        force_visual: bool = False,
     ) -> ExecutionResult:
         """Execute an edit via the orchestrator. Returns rich ExecutionResult."""
         lock = self._session_lock(session_id)
@@ -66,7 +67,7 @@ class EditEngine:
 
         async with lock:
             return await self._orchestrator.execute_edit(
-                session_id, page_num, prompt, on_progress,
+                session_id, page_num, prompt, on_progress, force_visual,
             )
 
     # ------------------------------------------------------------------

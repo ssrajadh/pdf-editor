@@ -56,6 +56,7 @@ class EditRequest(BaseModel):
     session_id: str
     page_num: int
     prompt: str
+    force_visual: bool = False
 
 
 class EditResult(BaseModel):
@@ -187,6 +188,15 @@ class ExecutionPlan(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class RegenRiskAssessment(BaseModel):
+    risk_level: Literal["low", "medium", "high", "critical"]
+    text_density: float
+    text_block_count: int
+    recommendation: str
+    safe_to_proceed: bool
+    override_available: bool
+
+
 class OperationResult(BaseModel):
     """Result of executing a single operation from the plan."""
 
@@ -194,9 +204,10 @@ class OperationResult(BaseModel):
     op_type: OperationType
     success: bool
     time_ms: int
-    path: Literal["programmatic", "visual", "fallback_visual"]
+    path: Literal["programmatic", "visual", "fallback_visual", "blocked"]
     detail: str
     error: str | None = None
+    risk_assessment: RegenRiskAssessment | None = None
 
 
 class TextReplaceResult(BaseModel):
@@ -233,6 +244,7 @@ class ExecutionResult(BaseModel):
     total_time_ms: int
     programmatic_count: int
     visual_count: int
+    blocked_count: int
     text_layer_source: Literal["original", "programmatic_edit", "mixed", "ocr"]
 
 

@@ -21,6 +21,7 @@ interface Props {
   history?: PageHistoryResponse | null;
   isReverting?: boolean;
   onSendEdit: (prompt: string) => void;
+  onForceEdit?: (prompt: string) => void;
   onPreviewPlan?: (prompt: string) => void;
   onExecutePlan?: (prompt: string) => void;
   onRetry?: () => void;
@@ -41,6 +42,7 @@ export default function ChatPanel({
   history,
   isReverting,
   onSendEdit,
+  onForceEdit,
   onPreviewPlan,
   onExecutePlan,
   onRetry,
@@ -134,7 +136,7 @@ export default function ChatPanel({
               )}
               {msg.role === "assistant" && !msg.isPlanPreview && (
                 msg.result ? (
-                  <ResultCard message={msg} />
+                  <ResultCard message={msg} onForceEdit={onForceEdit} />
                 ) : (
                   <ErrorOrTextBubble message={msg} />
                 )
@@ -277,6 +279,8 @@ function ProgressBubble({ message }: { message: ChatMessage }) {
   const { stage, op_index, total_ops } = message;
   const isFast = stage === "programmatic";
   const isSlow = stage === "generating";
+  const isWarning = stage === "warning" || stage === "caution";
+  const isBlocked = stage === "blocked";
 
   const hasOpInfo =
     op_index !== undefined && total_ops !== undefined && total_ops > 0;
@@ -286,11 +290,15 @@ function ProgressBubble({ message }: { message: ChatMessage }) {
       <div
         className={cn(
           "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] transition-all",
-          isFast
-            ? "bg-emerald-500/10 text-emerald-500"
-            : isSlow
-              ? "bg-blue-500/10 text-blue-400"
-              : "bg-muted text-muted-foreground",
+          isBlocked
+            ? "bg-destructive/10 text-red-400"
+            : isWarning
+              ? "bg-amber-500/10 text-amber-500"
+              : isFast
+                ? "bg-emerald-500/10 text-emerald-500"
+                : isSlow
+                  ? "bg-blue-500/10 text-blue-400"
+                  : "bg-muted text-muted-foreground",
         )}
       >
         <Loader2 className="h-3 w-3 animate-spin" />

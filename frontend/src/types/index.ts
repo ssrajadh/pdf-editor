@@ -38,9 +38,19 @@ export interface OperationResult {
   op_type: "text_replace" | "style_change" | "visual_regenerate";
   success: boolean;
   time_ms: number;
-  path: "programmatic" | "visual" | "fallback_visual";
+  path: "programmatic" | "visual" | "fallback_visual" | "blocked";
   detail: string;
   error?: string;
+  risk_assessment?: RegenRiskAssessment;
+}
+
+export interface RegenRiskAssessment {
+  risk_level: "low" | "medium" | "high" | "critical";
+  text_density: number;
+  text_block_count: number;
+  recommendation: string;
+  safe_to_proceed: boolean;
+  override_available: boolean;
 }
 
 export interface ExecutionResult {
@@ -52,6 +62,7 @@ export interface ExecutionResult {
   total_time_ms: number;
   programmatic_count: number;
   visual_count: number;
+  blocked_count: number;
   text_layer_source: "original" | "programmatic_edit" | "mixed" | "ocr";
 }
 
@@ -75,6 +86,7 @@ export interface ChatMessage {
   total_ops?: number;
   isPlanPreview?: boolean;
   previewPrompt?: string;
+  editPrompt?: string;
 }
 
 export interface PageTextBlock {
