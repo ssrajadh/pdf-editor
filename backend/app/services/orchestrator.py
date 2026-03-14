@@ -28,6 +28,7 @@ from app.prompts.orchestrator_plan import (
 )
 from app.services.model_provider import ModelProvider
 from app.services import pdf_service
+from app.services.state_manager import StateManager
 from app.storage.session import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -400,9 +401,11 @@ class Orchestrator:
         self,
         model_provider: ModelProvider,
         session_manager: SessionManager,
+        state_manager: StateManager | None = None,
     ):
         self.provider = model_provider
         self.sessions = session_manager
+        self.state_manager = state_manager or StateManager(session_manager)
 
     # ------------------------------------------------------------------
     # Planning
@@ -422,6 +425,12 @@ class Orchestrator:
             session_id, page_num, self.provider, self.sessions,
         )
 
+        # Get conversation history for this page
+        conversation = self.state_manager.get_conversation_context(
+            session_id, page_num,
+        )
+        conversation_context = self._format_conversation_for_planner(conversation)
+
         text_blocks_json = page_context_to_text_blocks_json(ctx)
         font_summary_formatted = format_font_summary(ctx.font_summary)
         from app.prompts.orchestrator_plan import ORCHESTRATOR_USER_TEMPLATE
@@ -438,6 +447,7 @@ class Orchestrator:
             has_cid_fonts=ctx.has_cid_fonts,
             text_density=ctx.text_density,
             font_summary_formatted=font_summary_formatted,
+            conversation_context=conversation_context,
         )
 
         raw = await self.provider.plan_edit(
@@ -507,6 +517,62 @@ class Orchestrator:
         except Exception as retry_err:
             logger.error("Plan parse retry also failed: %s — using fallback", retry_err)
             return _make_fallback_plan(instruction)
+
+    # ------------------------------------------------------------------
+    # Conversation context formatting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _format_conversation_for_planner(conversation: list[dict]) -> str:
+        """Format conversation history for the planner prompt.
+
+        Include the last 5 exchanges maximum (to keep context manageable).
+        Each exchange shows the user's instruction and the operations that
+        were executed with their results.
+        """
+        if not conversation:
+            return "No previous edits on this page."
+
+        # Pair up user/assistant messages
+        exchanges: list[tuple[dict, dict | None]] = []
+        i = 0
+        while i < len(conversation):
+            user_msg = conversation[i]
+            assistant_msg = conversation[i + 1] if i + 1 < len(conversation) else None
+            if user_msg.get("role") == "user":
+                exchanges.append((user_msg, assistant_msg))
+                i += 2
+            else:
+                i += 1
+
+        # Take last 5
+        exchanges = exchanges[-5:]
+
+        lines = []
+        for step_num, (user_msg, asst_msg) in enumerate(exchanges, start=1):
+            user_text = user_msg.get("content", "")
+            lines.append(f"  {step_num}. User: \"{user_text}\"")
+
+            if asst_msg:
+                ops = asst_msg.get("operations", [])
+                if ops:
+                    for op in ops:
+                        op_type = op.get("op_type", op.get("type", "unknown"))
+                        path = op.get("path", "unknown")
+                        success = op.get("success", False)
+                        detail = op.get("detail", "")
+                        time_ms = op.get("time_ms", 0)
+                        status = "success" if success else "failed"
+                        lines.append(
+                            f"     → {op_type}: {detail} "
+                            f"({path}, {time_ms}ms, {status})"
+                        )
+                else:
+                    summary = asst_msg.get("content", "")
+                    if summary:
+                        lines.append(f"     → {summary}")
+
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Base image selection — compound degradation prevention
@@ -1116,11 +1182,69 @@ class Orchestrator:
         instruction: str,
         on_progress: ProgressCallback,
     ) -> ExecutionResult:
-        """Plan then execute. Replaces direct edit_engine call from Phase 1."""
+        """Plan then execute, and store conversation context in the state stack."""
+        from datetime import datetime, timezone as _tz
+
         plan = await self.plan(session_id, page_num, instruction, on_progress)
-        return await self.execute(
+        result = await self.execute(
             session_id, page_num, plan, instruction, on_progress,
         )
+
+        # Build conversation messages for this edit
+        now = datetime.now(_tz.utc).isoformat()
+        user_message = {
+            "role": "user",
+            "content": instruction,
+            "timestamp": now,
+        }
+        assistant_message = {
+            "role": "assistant",
+            "content": result.plan_summary,
+            "operations": [op.model_dump() for op in result.operations],
+            "timestamp": now,
+        }
+
+        # Append to the running conversation for this page
+        current_conversation = list(
+            self.state_manager.get_conversation_context(session_id, page_num)
+        )
+        current_conversation.extend([user_message, assistant_message])
+
+        # Get the image path and text layer for the snapshot
+        session_path = self.sessions.get_session_path(session_id)
+        image_path = str(
+            pdf_service.get_page_image_path(session_path, page_num)
+        )
+
+        text_layer = None
+        if result.text_layer_source in ("programmatic_edit", "original"):
+            working_pdf = session_path / "working.pdf"
+            pdf_for_text = (
+                working_pdf if working_pdf.exists()
+                else session_path / "original.pdf"
+            )
+            try:
+                text_data = pdf_service.extract_text(pdf_for_text, page_num)
+                text_layer = [
+                    TextBlock(**b) for b in text_data["blocks"]
+                ]
+            except Exception:
+                pass
+
+        # Push snapshot to the state stack
+        self.state_manager.snapshot_after_edit(
+            session_id=session_id,
+            page_num=page_num,
+            prompt=instruction,
+            plan_summary=result.plan_summary,
+            result=result,
+            image_path=image_path,
+            text_layer=text_layer,
+            text_layer_source=result.text_layer_source,
+            conversation_messages=current_conversation,
+        )
+
+        return result
 
     # ------------------------------------------------------------------
     # Edit history

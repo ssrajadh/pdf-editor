@@ -15,6 +15,7 @@ from app.models.schemas import (
 )
 from app.services.model_provider import ModelProvider
 from app.services.orchestrator import Orchestrator
+from app.services.state_manager import StateManager
 from app.storage.session import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -29,12 +30,15 @@ class EditEngine:
         self,
         session_manager: SessionManager,
         model_provider: ModelProvider,
+        state_manager: StateManager | None = None,
     ):
         self._sessions = session_manager
         self._provider = model_provider
+        self._state_manager = state_manager or StateManager(session_manager)
         self._orchestrator = Orchestrator(
             model_provider=model_provider,
             session_manager=session_manager,
+            state_manager=self._state_manager,
         )
         self._locks: dict[str, asyncio.Lock] = {}
 

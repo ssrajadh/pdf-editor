@@ -32,12 +32,13 @@ _provider = ProviderFactory.get_provider(
     settings.gemini_api_key,
 )
 
+state_mgr = StateManager(session_mgr)
+
 edit_engine = EditEngine(
     session_manager=session_mgr,
     model_provider=_provider,
+    state_manager=state_mgr,
 )
-
-state_mgr = StateManager(session_mgr)
 
 
 def _snapshot_to_response(

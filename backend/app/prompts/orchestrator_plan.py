@@ -384,6 +384,121 @@ Plan:
 }
 
 ═══════════════════════════════════════════════════════════════════════════════
+CONVERSATION CONTEXT
+═══════════════════════════════════════════════════════════════════════════════
+
+You may receive a history of previous edits on this page. Use it to:
+
+1. RESOLVE REFERENCES: "make it bold" → the "it" refers to the text that was just \
+edited in the previous step. Check the last operation to find what text was changed.
+
+2. UNDERSTAND REVERSALS: "change it back" or "undo that" → the user wants to revert \
+the previous edit. Route this as a text_replace with original and replacement swapped \
+from the previous text_replace, OR as visual_regenerate if the previous op was visual.
+
+3. REFINE PREVIOUS EDITS: "actually make it bigger too" after a color change → \
+the user wants to modify the same text element again. Use style_change targeting \
+the same text.
+
+4. TRACK CUMULATIVE STATE: if the user changed "Q3" to "Q4" in step 1, the current \
+page text now contains "Q4", not "Q3". Your text searches should look for the \
+CURRENT text, not the original.
+
+5. AVOID REDUNDANT OPERATIONS: if the user asks for something already done \
+("make the title red" when it's already red from step 2), note this in the \
+plan summary and return an empty operations list.
+
+── Conversational example 1: Follow-up reference ──
+Previous edits:
+  1. User: "Change Revenue to Net Revenue"
+     → text_replace: 'Revenue' → 'Net Revenue' (programmatic, success)
+Current instruction: "now make it bold"
+Plan:
+{
+  "operations": [
+    {
+      "type": "style_change",
+      "target_text": "Net Revenue",
+      "changes": {"bold": true},
+      "confidence": 0.9,
+      "reasoning": "'it' refers to 'Net Revenue' from the previous text replacement"
+    }
+  ],
+  "execution_order": [0],
+  "summary": "Bold the text 'Net Revenue' that was changed in the previous edit.",
+  "all_programmatic": true
+}
+
+── Conversational example 2: Undo request ──
+Previous edits:
+  1. User: "Change 2025 to 2026"
+     → text_replace: '2025' → '2026' (programmatic, success)
+Current instruction: "change it back"
+Plan:
+{
+  "operations": [
+    {
+      "type": "text_replace",
+      "original_text": "2026",
+      "replacement_text": "2025",
+      "context_after": " Revenue Report",
+      "match_strategy": "first_occurrence",
+      "confidence": 0.95,
+      "reasoning": "Reversing previous text replacement: '2026' back to '2025'"
+    }
+  ],
+  "execution_order": [0],
+  "summary": "Undo previous edit: revert '2026' back to '2025'.",
+  "all_programmatic": true
+}
+
+── Conversational example 3: Refinement after visual edit ──
+Previous edits:
+  1. User: "make background blue"
+     → visual_regenerate: full_page (visual, success)
+Current instruction: "make it darker"
+Plan:
+{
+  "operations": [
+    {
+      "type": "visual_regenerate",
+      "prompt": "Make the blue background darker, using a deeper navy blue. Keep all text and other elements exactly as they are.",
+      "region": "full_page",
+      "confidence": 0.8,
+      "reasoning": "Refining a visual edit requires another visual operation. 'it' refers to the blue background from the previous visual edit."
+    }
+  ],
+  "execution_order": [0],
+  "summary": "Darken the blue background from the previous visual edit.",
+  "all_programmatic": false
+}
+
+── Conversational example 4: Reference to earlier edit ──
+Previous edits:
+  1. User: "Change the title to Q4 Results"
+     → text_replace: 'Q3 Results' → 'Q4 Results' (programmatic, success)
+  2. User: "Update the subtitle"
+     → text_replace: 'Draft' → 'Final' (programmatic, success)
+  3. User: "Change the date to December"
+     → text_replace: 'September' → 'December' (programmatic, success)
+Current instruction: "go back and make the title bigger"
+Plan:
+{
+  "operations": [
+    {
+      "type": "style_change",
+      "target_text": "Q4 Results",
+      "changes": {"font_size": 28},
+      "confidence": 0.85,
+      "reasoning": "'the title' refers to 'Q4 Results' (was 'Q3 Results' before step 1). Using the current text, not the original."
+    }
+  ],
+  "execution_order": [0],
+  "summary": "Increase font size of the title 'Q4 Results'.",
+  "all_programmatic": true
+}
+
+═══════════════════════════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -405,6 +520,9 @@ Page layout analysis:
 - Text density: {text_density}
 - Fonts on this page:
 {font_summary_formatted}
+
+Previous edits on this page:
+{conversation_context}
 
 Page text:
 \"\"\"
@@ -433,6 +551,7 @@ def build_orchestrator_messages(
     has_cid_fonts: bool = False,
     text_density: float = 0.0,
     font_summary_formatted: str = "  (no fonts detected)",
+    conversation_context: str = "No previous edits on this page.",
 ) -> list[dict]:
     """Build the messages array for the Gemini text-only API call."""
     user_content = ORCHESTRATOR_USER_TEMPLATE.format(
@@ -447,6 +566,7 @@ def build_orchestrator_messages(
         has_cid_fonts=has_cid_fonts,
         text_density=text_density,
         font_summary_formatted=font_summary_formatted,
+        conversation_context=conversation_context,
     )
 
     return [
