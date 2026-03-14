@@ -21,6 +21,7 @@ interface Props {
   history?: PageHistoryResponse | null;
   isReverting?: boolean;
   hasSession: boolean;
+  isRestoring?: boolean;
   onSendEdit: (prompt: string) => void;
   onForceEdit?: (prompt: string) => void;
   onPreviewPlan?: (prompt: string) => void;
@@ -43,6 +44,7 @@ export default function ChatPanel({
   history,
   isReverting,
   hasSession,
+  isRestoring,
   onSendEdit,
   onForceEdit,
   onPreviewPlan,
@@ -87,7 +89,9 @@ export default function ChatPanel({
     !isEditing &&
     onRetry;
   const busy = isEditing || isPreviewing;
-  const disabled = busy || !hasSession;
+  const disabled = busy || !hasSession || isRestoring;
+  const inputEmpty = !input.trim();
+  const sendDisabled = disabled || inputEmpty;
 
   const editCount = messages.filter(
     (m) => m.role === "assistant" && m.result,
@@ -130,7 +134,9 @@ export default function ChatPanel({
       {/* ---- Messages ---- */}
       <ScrollArea className="flex-1">
         <div ref={scrollRef} className="p-3 space-y-3">
-          {messages.length === 0 && <EmptyState hasSession={hasSession} />}
+          {messages.length === 0 && (
+            <EmptyState hasSession={hasSession} isRestoring={!!isRestoring} />
+          )}
 
           {messages.map((msg) => (
             <div key={msg.id} className="animate-fade-in">
@@ -178,12 +184,14 @@ export default function ChatPanel({
                 ? "Editing..."
                 : hasSession
                   ? "Describe your edit..."
-                  : "Upload a PDF first..."
+                  : isRestoring
+                    ? "Restoring session..."
+                    : "Upload a PDF first..."
             }
             disabled={disabled}
             rows={1}
             className={cn(
-              "flex-1 resize-none rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px]",
+              "flex-1 resize-none rounded-md border border-input bg-muted/30 dark:bg-muted/40 px-2.5 py-1.5 text-[13px]",
               "placeholder:text-muted-foreground/40",
               "focus:outline-none focus:ring-1 focus:ring-ring",
               "disabled:cursor-not-allowed disabled:opacity-40",
@@ -195,15 +203,15 @@ export default function ChatPanel({
               el.style.height = Math.min(el.scrollHeight, 104) + "px";
             }}
           />
-          <div className="flex gap-1">
+          <div className="flex gap-2.5">
             {onPreviewPlan && (
               <Button
                 variant="outline"
                 size="icon"
                 onClick={handlePreview}
-                disabled={disabled || !input.trim()}
+                disabled={disabled || inputEmpty}
                 title="Preview plan"
-                className="h-8 w-8 shrink-0"
+                className="h-9 w-9 shrink-0"
               >
                 {isPreviewing ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -213,11 +221,15 @@ export default function ChatPanel({
               </Button>
             )}
             <Button
+              variant={inputEmpty ? "ghost" : "default"}
               size="icon"
               onClick={handleSubmit}
-              disabled={disabled || !input.trim()}
+              disabled={sendDisabled}
               title="Send (Enter)"
-              className="h-8 w-8 shrink-0"
+              className={cn(
+                "h-9 w-9 shrink-0",
+                inputEmpty && "opacity-50",
+              )}
             >
               {isEditing ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -257,8 +269,27 @@ export default function ChatPanel({
    Sub-components
    ================================================================ */
 
-function EmptyState({ hasSession }: { hasSession: boolean }) {
+function EmptyState({
+  hasSession,
+  isRestoring,
+}: {
+  hasSession: boolean;
+  isRestoring: boolean;
+}) {
   if (!hasSession) {
+    if (isRestoring) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-center select-none px-4">
+          <div className="mb-3 rounded-xl bg-muted p-4">
+            <Pencil className="h-6 w-6 text-muted-foreground/40" />
+          </div>
+          <p className="text-[13px] font-medium">Loading conversation...</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Restoring your session
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center select-none px-4">
         <div className="mb-3 rounded-xl bg-muted p-4">
@@ -348,6 +379,7 @@ function ProgressBubble({ message }: { message: ChatMessage }) {
 
 function ErrorOrTextBubble({ message }: { message: ChatMessage }) {
   const isError = message.content.startsWith("Error:");
+  const isSystem = message.content.startsWith("Reverted to step");
 
   if (isError) {
     return (
@@ -358,6 +390,16 @@ function ErrorOrTextBubble({ message }: { message: ChatMessage }) {
             <span>{message.content.replace(/^Error:\s*/, "")}</span>
           </div>
         </Card>
+      </div>
+    );
+  }
+
+  if (isSystem) {
+    return (
+      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <Separator className="flex-1" />
+        <span>{message.content}</span>
+        <Separator className="flex-1" />
       </div>
     );
   }

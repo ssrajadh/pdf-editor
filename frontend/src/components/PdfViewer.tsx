@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import type { Session, EditProgress } from "@/types";
@@ -14,6 +15,7 @@ interface Props {
   pageVersion?: number;
   isEditing: boolean;
   editProgress: EditProgress | null;
+  hasEditWarnings?: boolean;
 }
 
 export default function PdfViewer({
@@ -24,6 +26,7 @@ export default function PdfViewer({
   pageVersion,
   isEditing,
   editProgress,
+  hasEditWarnings,
 }: Props) {
   const [loading, setLoading] = useState(true);
   const [imgError, setImgError] = useState(false);
@@ -49,8 +52,9 @@ export default function PdfViewer({
   return (
     <div className="flex h-full flex-col bg-canvas">
       {/* ---- Canvas area ---- */}
-      <div className="flex-1 overflow-auto flex items-center justify-center p-6">
-        <div className="relative w-full max-w-2xl max-w-full overflow-hidden">
+      <ScrollArea className="flex-1 bg-muted/50">
+        <div className="flex min-h-full items-center justify-center p-6">
+          <div className="relative w-full max-w-2xl max-w-full overflow-hidden">
           {/* Skeleton / loading pulse */}
           {loading && !imgError && (
             <div className="absolute inset-0 z-10 flex items-center justify-center rounded-sm">
@@ -94,7 +98,7 @@ export default function PdfViewer({
               alt={`Page ${currentPage}`}
               className={cn(
                 "w-auto max-w-full h-auto max-h-[calc(100vh-220px)] object-contain bg-white rounded-sm",
-                "shadow-[0_2px_12px_rgba(0,0,0,0.25)]",
+                "shadow-sm shadow-black/20 dark:shadow-black/60",
                 "transition-opacity duration-150",
                 loading ? "opacity-0" : "opacity-100",
               )}
@@ -105,8 +109,9 @@ export default function PdfViewer({
               }}
             />
           )}
+          </div>
         </div>
-      </div>
+      </ScrollArea>
 
       {/* ---- Bottom info bar ---- */}
       <div className="flex h-9 items-center border-t bg-panel px-4 shrink-0 select-none">
@@ -124,6 +129,7 @@ export default function PdfViewer({
               showOriginal={showOriginal}
               onToggle={setShowOriginal}
               pageVersion={pageVersion}
+              hasWarnings={hasEditWarnings}
             />
           </>
         )}

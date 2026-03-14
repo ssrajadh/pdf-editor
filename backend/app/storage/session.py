@@ -30,6 +30,9 @@ class SessionManager:
             "page_count": page_count,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "current_page_versions": {str(i): 0 for i in range(1, page_count + 1)},
+            "last_active_page": 1,
+            "last_edit_at": datetime.now(timezone.utc).isoformat(),
+            "total_edits": 0,
         }
         (session_dir / "metadata.json").write_text(json.dumps(metadata))
 
@@ -41,6 +44,28 @@ class SessionManager:
         if not path.exists():
             raise FileNotFoundError(f"Session {session_id} not found")
         return path
+
+    def list_sessions(self, max_age_hours: int = 24) -> list[dict]:
+        """Return metadata for sessions younger than max_age_hours."""
+        cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
+        sessions: list[dict] = []
+
+        for session_dir in self._storage_path.iterdir():
+            if not session_dir.is_dir():
+                continue
+            meta_path = session_dir / "metadata.json"
+            if not meta_path.exists():
+                continue
+            try:
+                meta = json.loads(meta_path.read_text())
+                created = datetime.fromisoformat(meta["created_at"]).timestamp()
+                if created < cutoff:
+                    continue
+                sessions.append(meta)
+            except Exception:
+                continue
+
+        return sessions
 
     def get_metadata(self, session_id: str) -> dict:
         """Load session metadata."""

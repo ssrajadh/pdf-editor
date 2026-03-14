@@ -29,6 +29,7 @@ function App() {
     isEditing,
     isPreviewing,
     isReverting,
+    isRestoring,
     isReconnecting,
     uploading,
     uploadError,
@@ -172,6 +173,11 @@ function App() {
   const originalImageUrl = session
     ? getPageImageUrl(session.session_id, currentPage, 0)
     : "";
+  const hasEditWarnings = Boolean(
+    currentHistory?.snapshots
+      ?.find((s) => s.step === currentHistory.current_step)
+      ?.operations_summary?.some((op) => !op.success || op.path === "blocked"),
+  );
 
   return (
     <TooltipProvider>
@@ -232,7 +238,17 @@ function App() {
                 pageVersion={currentPageVersion}
                 isEditing={isEditing}
                 editProgress={editProgress}
+                hasEditWarnings={hasEditWarnings}
               />
+            ) : isRestoring ? (
+              <div className="flex h-full items-center justify-center p-6">
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <p className="text-[13px] text-muted-foreground">
+                    Restoring session...
+                  </p>
+                </div>
+              </div>
             ) : (
               <div className="flex h-full items-center justify-center p-6">
                 <div className="flex w-full max-w-3xl flex-col items-center gap-4 text-center">
@@ -301,6 +317,7 @@ function App() {
               history={session ? currentHistory : null}
               isReverting={session ? isReverting : false}
               hasSession={!!session}
+              isRestoring={isRestoring}
               onSendEdit={sendEdit}
               onForceEdit={forceVisualEdit}
               onPreviewPlan={previewPlan}

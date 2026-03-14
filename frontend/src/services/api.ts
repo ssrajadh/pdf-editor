@@ -1,4 +1,12 @@
-import type { Session, PageTextResponse, ExecutionPlan, PageHistoryResponse, PageSnapshotResponse } from "../types";
+import type {
+  Session,
+  PageTextResponse,
+  ExecutionPlan,
+  PageHistoryResponse,
+  PageSnapshotResponse,
+  SessionListItem,
+  SessionStateResponse,
+} from "../types";
 
 const API_BASE = "/api";
 
@@ -53,6 +61,24 @@ export async function getSessionInfo(sessionId: string): Promise<Session> {
     throw new Error(err.detail ?? "Session not found");
   }
 
+  return res.json();
+}
+
+export async function listSessions(): Promise<SessionListItem[]> {
+  const res = await fetch(`${API_BASE}/pdf/sessions`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Failed to list sessions");
+  }
+  return res.json();
+}
+
+export async function getSessionState(sessionId: string): Promise<SessionStateResponse> {
+  const res = await fetch(`${API_BASE}/pdf/${sessionId}/state`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Failed to restore session");
+  }
   return res.json();
 }
 

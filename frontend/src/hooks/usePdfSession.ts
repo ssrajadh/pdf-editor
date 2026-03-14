@@ -14,6 +14,7 @@ import {
   previewPlan as apiPreviewPlan,
   getPageHistory as apiGetPageHistory,
   revertToStep as apiRevertToStep,
+  getSessionState as apiGetSessionState,
 } from "../services/api";
 import { useWebSocket } from "./useWebSocket";
 
@@ -35,6 +36,7 @@ export function usePdfSession() {
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [pageHistories, setPageHistories] = useState<Record<number, PageHistoryResponse>>({});
   const [isReverting, setIsReverting] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   const sessionStartRef = useRef<number | null>(null);
 
   const currentPlanRef = useRef<ExecutionPlan | null>(null);
@@ -178,6 +180,8 @@ export function usePdfSession() {
     try {
       const result = await apiUploadPdf(file);
       setSession(result);
+      sessionStorage.setItem("nano_pdf_session_id", result.session_id);
+      window.history.replaceState(null, "", `#session=${result.session_id}`);
       setCurrentPage(1);
       setPageVersions({});
       setPageEditTypes({});
@@ -192,6 +196,78 @@ export function usePdfSession() {
       setUploading(false);
     }
   }, []);
+
+  const restoreSession = useCallback(async (sessionId: string) => {
+    setIsRestoring(true);
+    try {
+      const state = await apiGetSessionState(sessionId);
+      setSession({
+        session_id: state.session_id,
+        page_count: state.page_count,
+        filename: state.filename,
+      });
+      setCurrentPage(state.current_page);
+
+      const nextVersions: Record<number, number> = {};
+      const nextEditTypes: Record<number, PageEditType> = {};
+      let totalEdits = 0;
+
+      state.pages.forEach((p) => {
+        nextVersions[p.page_num] = p.current_step;
+        totalEdits += p.current_step;
+        nextEditTypes[p.page_num] = {
+          hasProgram: p.edit_types.includes("programmatic"),
+          hasVisual: p.edit_types.includes("visual"),
+        };
+      });
+
+      setPageVersions(nextVersions);
+      setPageEditTypes(nextEditTypes);
+
+      const nextChats: Record<number, ChatMessage[]> = {};
+      Object.entries(state.conversations ?? {}).forEach(([key, msgs]) => {
+        const pageNum = Number(key);
+        if (!Number.isNaN(pageNum)) {
+          nextChats[pageNum] = msgs;
+        }
+      });
+      setChatMessages(nextChats);
+      setEditCount(totalEdits);
+      setPageHistories({});
+      setEditProgress(null);
+      sessionStartRef.current = Date.now();
+
+      sessionStorage.setItem("nano_pdf_session_id", state.session_id);
+      window.history.replaceState(null, "", `#session=${state.session_id}`);
+
+      // Refresh history for current page if it has edits
+      if (state.current_page && nextVersions[state.current_page] > 0) {
+        fetchHistoryRef.current(state.current_page);
+      }
+    } catch {
+      sessionStorage.removeItem("nano_pdf_session_id");
+      window.history.replaceState(null, "", window.location.pathname);
+      setSession(null);
+      setCurrentPage(1);
+      setPageVersions({});
+      setPageEditTypes({});
+      setChatMessages({});
+      setPageHistories({});
+      setEditCount(0);
+    } finally {
+      setIsRestoring(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const match = window.location.hash.match(/session=([a-f0-9-]+)/i);
+    const hashSession = match?.[1];
+    const storedSession = sessionStorage.getItem("nano_pdf_session_id");
+    const sessionId = hashSession || storedSession;
+    if (sessionId) {
+      restoreSession(sessionId);
+    }
+  }, [restoreSession]);
 
   const selectPage = useCallback((page: number) => {
     setCurrentPage(page);
@@ -390,6 +466,7 @@ export function usePdfSession() {
     isEditing,
     isPreviewing,
     isReverting,
+    isRestoring,
     isConnected,
     isReconnecting,
     uploading,

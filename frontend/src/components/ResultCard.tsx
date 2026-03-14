@@ -37,13 +37,13 @@ function TimeBadge({ result }: { result: ExecutionResult }) {
 
   if (hasFallback) {
     icon = "⚠️";
-    cls = "border-orange-500/30 bg-orange-500/10 text-orange-400";
+    cls = "border-amber-500/30 bg-amber-500/20 text-amber-900 dark:text-amber-200";
   } else if (allProg) {
     icon = "⚡";
     cls = "border-emerald-500/30 bg-emerald-500/10 text-emerald-500";
   } else {
     icon = "🎨";
-    cls = "border-blue-500/30 bg-blue-500/10 text-blue-400";
+    cls = "border-amber-500/30 bg-amber-500/20 text-amber-900 dark:text-amber-200";
   }
 
   return (
@@ -69,7 +69,7 @@ function TextLayerLine({ source }: { source: ExecutionResult["text_layer_source"
   }
   if (source === "ocr") {
     return (
-      <div className="flex items-center gap-1 text-[11px] text-amber-500">
+      <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
         <AlertTriangle className="h-3 w-3" />
         Text layer reconstructed via OCR
       </div>
@@ -77,7 +77,7 @@ function TextLayerLine({ source }: { source: ExecutionResult["text_layer_source"
   }
   if (source === "mixed") {
     return (
-      <div className="flex items-center gap-1 text-[11px] text-amber-500">
+      <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
         <AlertTriangle className="h-3 w-3" />
         Text layer partially preserved
       </div>
@@ -129,12 +129,14 @@ function PlanDetails({ plan }: { plan: ExecutionPlan }) {
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex items-center gap-0.5 text-[11px] text-blue-500 hover:text-blue-400 transition-colors py-0.5">
-        <ChevronRight
-          className={cn("h-3 w-3 transition-transform", open && "rotate-90")}
-        />
-        {open ? "Hide" : "Show"} plan
-      </CollapsibleTrigger>
+      <div className="flex justify-end">
+        <CollapsibleTrigger className="flex items-center gap-0.5 text-[10px] text-blue-500 hover:text-blue-400 transition-colors py-0.5">
+          <ChevronRight
+            className={cn("h-3 w-3 transition-transform", open && "rotate-90")}
+          />
+          {open ? "Hide" : "Show"} plan
+        </CollapsibleTrigger>
+      </div>
 
       <CollapsibleContent>
         <div className="mt-1 rounded border bg-background px-2.5 py-2 text-[11px] space-y-2 animate-fade-in break-words">

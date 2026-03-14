@@ -52,7 +52,7 @@ export default function EditHistory({ history, isReverting, onRevert }: Props) {
     <>
       <div className="flex items-center gap-2 px-3 py-2">
         <History className="h-3 w-3 shrink-0 text-muted-foreground" />
-        <div className="flex items-center gap-1">
+        <div className="flex items-end gap-2">
           {snapshots.map((snap) => {
             const isCurrent = snap.step === current_step;
             const isFuture = snap.step > current_step;
@@ -61,20 +61,26 @@ export default function EditHistory({ history, isReverting, onRevert }: Props) {
             return (
               <Tooltip key={snap.step}>
                 <TooltipTrigger asChild>
-                  <button
-                    onClick={() => handleDotClick(snap.step)}
-                    disabled={isCurrent || isReverting}
-                    className={cn(
-                      "relative h-3 w-3 rounded-full border-2 transition-all",
-                      isCurrent
-                        ? "border-primary bg-primary scale-125"
-                        : isFuture
+                  <div className="flex flex-col items-center gap-1">
+                    <button
+                      onClick={() => handleDotClick(snap.step)}
+                      disabled={isCurrent || isReverting}
+                      className={cn(
+                        "relative rounded-full border-2 transition-all",
+                        isCurrent ? "h-3 w-3 border-primary bg-primary" : "h-2.5 w-2.5",
+                        isFuture
                           ? "border-muted-foreground/20 bg-transparent"
-                          : "border-muted-foreground/40 bg-muted-foreground/20 hover:border-primary hover:bg-primary/30",
-                      isReverting && "cursor-not-allowed opacity-50",
-                      !isCurrent && !isReverting && !isFuture && "cursor-pointer",
-                    )}
-                  />
+                          : isCurrent
+                            ? ""
+                            : "border-muted-foreground/40 bg-muted-foreground/20 hover:border-primary hover:bg-primary/30",
+                        isReverting && "cursor-not-allowed opacity-50",
+                        !isCurrent && !isReverting && !isFuture && "cursor-pointer",
+                      )}
+                    />
+                    <span className="text-[9px] text-muted-foreground">
+                      {snap.step}
+                    </span>
+                  </div>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="max-w-[200px] text-[11px]">
                   <p className="font-medium">
@@ -99,7 +105,7 @@ export default function EditHistory({ history, isReverting, onRevert }: Props) {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => onRevert(current_step - 1)}
+                onClick={() => onRevert(0)}
                 disabled={isReverting}
                 className="ml-auto h-6 w-6"
               >
@@ -107,7 +113,7 @@ export default function EditHistory({ history, isReverting, onRevert }: Props) {
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-[11px]">
-              Undo last edit
+              Revert to original
             </TooltipContent>
           </Tooltip>
         )}

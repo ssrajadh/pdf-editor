@@ -6,7 +6,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/components/ThemeProvider";
 import type { Session } from "@/types";
 
@@ -31,14 +30,14 @@ export default function Header({
   const isDark = theme === "dark";
 
   return (
-    <header className="flex h-11 items-center border-b bg-panel px-3 shrink-0 select-none">
+    <header className="flex h-11 items-center border-b bg-panel px-4 pr-5 shrink-0 select-none">
       {/* Left: branding */}
       <div className="flex items-center gap-1.5">
         <div className="flex h-6 w-6 items-center justify-center rounded bg-blue-600">
           <FileText className="h-3.5 w-3.5 text-white" />
         </div>
         <span className="text-[13px] font-semibold tracking-tight">
-          Nano PDF
+          Nano PDF Studio
         </span>
       </div>
 
@@ -46,13 +45,13 @@ export default function Header({
 
       {/* Center: file context */}
       <div className="flex items-center gap-2 text-[13px] text-muted-foreground min-w-0">
-        <span className="truncate max-w-[240px] font-medium text-foreground">
+        <span className="truncate max-w-[280px] font-medium text-foreground">
           {session ? session.filename : "No file loaded"}
         </span>
         {session && (
-          <Badge variant="secondary" className="rounded px-1.5 py-0 text-[11px] font-mono h-5 shrink-0">
-            {currentPage}/{session.page_count}
-          </Badge>
+          <span className="text-muted-foreground">
+            · Page {currentPage} of {session.page_count}
+          </span>
         )}
       </div>
 
@@ -63,7 +62,7 @@ export default function Header({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
                   onClick={onExport}
                   disabled={exporting}
@@ -98,7 +97,7 @@ export default function Header({
               variant="ghost"
               size="icon"
               onClick={() => setTheme(isDark ? "light" : "dark")}
-              className="h-7 w-7"
+              className="ml-1 h-7 w-7"
             >
               {isDark ? (
                 <Sun className="h-3.5 w-3.5" />

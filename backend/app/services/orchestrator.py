@@ -1569,6 +1569,17 @@ class Orchestrator:
             conversation_messages=current_conversation,
         )
 
+        try:
+            metadata = self.sessions.get_metadata(session_id)
+            if any(op.success for op in result.operations):
+                metadata["last_edit_at"] = now
+                metadata["total_edits"] = int(metadata.get("total_edits", 0)) + 1
+            metadata["last_active_page"] = page_num
+            metadata["last_active_at"] = now
+            self.sessions.update_metadata(session_id, metadata)
+        except Exception:
+            pass
+
         return result
 
     # ------------------------------------------------------------------

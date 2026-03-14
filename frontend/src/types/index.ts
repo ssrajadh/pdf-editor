@@ -4,6 +4,33 @@ export interface Session {
   filename: string;
 }
 
+export interface SessionListItem {
+  session_id: string;
+  filename: string;
+  page_count: number;
+  created_at: string;
+  last_edit_at: string;
+  total_edits: number;
+}
+
+export interface SessionStatePage {
+  page_num: number;
+  current_step: number;
+  total_steps: number;
+  image_url: string;
+  has_edits: boolean;
+  edit_types: Array<"programmatic" | "visual">;
+}
+
+export interface SessionStateResponse {
+  session_id: string;
+  filename: string;
+  page_count: number;
+  current_page: number;
+  pages: SessionStatePage[];
+  conversations: Record<string, ChatMessage[]>;
+}
+
 export interface PageInfo {
   page_num: number;
   version: number;

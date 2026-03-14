@@ -1,17 +1,21 @@
 import json
 import logging
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
 
 from app.config import settings
+from datetime import datetime, timezone
 from app.models.schemas import (
     TextBlock,
     UploadResponse,
     PageTextResponse,
     SessionInfoResponse,
     TextLayerResponse,
+    SessionListItem,
+    SessionStateResponse,
+    SessionStatePage,
 )
 from app.services import pdf_service
 from app.services.state_manager import StateManager
@@ -22,6 +26,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 session_mgr = SessionManager(settings.storage_path)
 state_mgr = StateManager(session_mgr)
+
+
+def _touch_session_page(session_id: str, page_num: int) -> None:
+    try:
+        metadata = session_mgr.get_metadata(session_id)
+    except FileNotFoundError:
+        return
+    metadata["last_active_page"] = page_num
+    metadata["last_active_at"] = datetime.now(timezone.utc).isoformat()
+    session_mgr.update_metadata(session_id, metadata)
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -89,6 +103,112 @@ async def upload_pdf(file: UploadFile = File(...)):
     return UploadResponse(session_id=session_id, filename=file.filename, page_count=page_count)
 
 
+@router.get("/sessions", response_model=list[SessionListItem])
+async def list_sessions():
+    """Return active sessions (last 24h), sorted by last_edit_at desc."""
+    sessions = session_mgr.list_sessions(max_age_hours=24)
+    items: list[SessionListItem] = []
+    for meta in sessions:
+        last_edit_at = meta.get("last_edit_at") or meta.get("created_at")
+        items.append(SessionListItem(
+            session_id=meta["session_id"],
+            filename=meta.get("filename", "document.pdf"),
+            page_count=meta.get("page_count", 0),
+            created_at=meta.get("created_at", ""),
+            last_edit_at=last_edit_at or "",
+            total_edits=int(meta.get("total_edits", 0)),
+        ))
+
+    items.sort(key=lambda i: i.last_edit_at, reverse=True)
+    return items
+
+
+@router.get("/{session_id}/state", response_model=SessionStateResponse)
+async def get_session_state(session_id: str):
+    """Return full session state for frontend restore."""
+    try:
+        metadata = session_mgr.get_metadata(session_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    page_count = int(metadata.get("page_count", 0))
+    current_page = int(metadata.get("last_active_page", 1))
+
+    pages: list[SessionStatePage] = []
+    conversations: dict[str, list[dict]] = {}
+
+    for page_num in range(1, page_count + 1):
+        stack = state_mgr.get_stack(session_id, page_num)
+        current_step = stack.current_step if stack.snapshots else 0
+        total_steps = len(stack.snapshots)
+
+        has_program = False
+        has_visual = False
+        for snap in stack.snapshots:
+            if not snap.execution_result:
+                continue
+            for op in snap.execution_result.operations:
+                if op.path == "programmatic":
+                    has_program = True
+                if op.path in ("visual", "fallback_visual"):
+                    has_visual = True
+
+        edit_types: list[Literal["programmatic", "visual"]] = []
+        if has_program:
+            edit_types.append("programmatic")
+        if has_visual:
+            edit_types.append("visual")
+
+        image_url = (
+            f"/api/pdf/{session_id}/page/{page_num}/image?step={current_step}"
+        )
+
+        pages.append(SessionStatePage(
+            page_num=page_num,
+            current_step=current_step,
+            total_steps=total_steps,
+            image_url=image_url,
+            has_edits=current_step > 0,
+            edit_types=edit_types,
+        ))
+
+        messages: list[dict] = []
+        for snap in stack.snapshots:
+            if snap.step == 0 or not snap.prompt:
+                continue
+            ts = snap.timestamp.isoformat() if isinstance(snap.timestamp, datetime) else str(snap.timestamp)
+            messages.append({
+                "id": f"restored-{page_num}-{snap.step}-user",
+                "role": "user",
+                "content": snap.prompt,
+                "timestamp": ts,
+            })
+            if snap.execution_result:
+                result = snap.execution_result.model_dump(mode="json")
+            else:
+                result = None
+            messages.append({
+                "id": f"restored-{page_num}-{snap.step}-assistant",
+                "role": "assistant",
+                "content": snap.plan_summary or "Edit applied",
+                "timestamp": ts,
+                "result": result,
+            })
+
+        conversations[str(page_num)] = messages
+
+    _touch_session_page(session_id, current_page)
+
+    return SessionStateResponse(
+        session_id=metadata["session_id"],
+        filename=metadata.get("filename", "document.pdf"),
+        page_count=page_count,
+        current_page=current_page,
+        pages=pages,
+        conversations=conversations,
+    )
+
+
 @router.get("/{session_id}/page/{page_num}/image")
 async def get_page_image(
     session_id: str,
@@ -107,6 +227,7 @@ async def get_page_image(
         session_path = session_mgr.get_session_path(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
+    _touch_session_page(session_id, page_num)
 
     # --- step-based lookup via state stack ---
     if step is not None or v is None:
@@ -155,6 +276,7 @@ async def get_page_text(session_id: str, page_num: int):
         session_path = session_mgr.get_session_path(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
+    _touch_session_page(session_id, page_num)
 
     pdf_path = session_path / "original.pdf"
 
@@ -178,6 +300,7 @@ async def get_text_layer(session_id: str, page_num: int):
         session_path = session_mgr.get_session_path(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
+    _touch_session_page(session_id, page_num)
 
     metadata = session_mgr.get_metadata(session_id)
     version = int(metadata["current_page_versions"].get(str(page_num), 0))

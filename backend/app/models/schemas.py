@@ -46,6 +46,33 @@ class SessionInfoResponse(BaseModel):
     current_page_versions: dict[int, int]
 
 
+class SessionListItem(BaseModel):
+    session_id: str
+    filename: str
+    page_count: int
+    created_at: str
+    last_edit_at: str
+    total_edits: int
+
+
+class SessionStatePage(BaseModel):
+    page_num: int
+    current_step: int
+    total_steps: int
+    image_url: str
+    has_edits: bool
+    edit_types: list[Literal["programmatic", "visual"]]
+
+
+class SessionStateResponse(BaseModel):
+    session_id: str
+    filename: str
+    page_count: int
+    current_page: int
+    pages: list[SessionStatePage]
+    conversations: dict[str, list[dict]]
+
+
 class PageInfo(BaseModel):
     page_number: int
     width: float

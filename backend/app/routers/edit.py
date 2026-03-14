@@ -130,6 +130,14 @@ async def edit_websocket(websocket: WebSocket, session_id: str):
                 continue
 
             try:
+                metadata = session_mgr.get_metadata(session_id)
+                metadata["last_active_page"] = int(page_num)
+                metadata["last_active_at"] = datetime.now(timezone.utc).isoformat()
+                session_mgr.update_metadata(session_id, metadata)
+            except Exception:
+                pass
+
+            try:
                 result = await edit_engine.execute_edit(
                     session_id, int(page_num), prompt, send_progress, force_visual,
                 )
@@ -178,6 +186,14 @@ async def plan_preview(
         session_mgr.get_session_path(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        metadata = session_mgr.get_metadata(session_id)
+        metadata["last_active_page"] = int(page_num)
+        metadata["last_active_at"] = datetime.now(timezone.utc).isoformat()
+        session_mgr.update_metadata(session_id, metadata)
+    except Exception:
+        pass
 
     try:
         return await edit_engine.preview_plan(session_id, page_num, body.prompt)
