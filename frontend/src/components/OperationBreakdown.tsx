@@ -1,24 +1,22 @@
-import type { ExecutionResult, OperationResult } from "../types";
+import { cn } from "@/lib/utils";
+import type { ExecutionResult, OperationResult } from "@/types";
 
 function formatTime(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 }
 
-const PATH_CONFIG: Record<string, { icon: string; badge: string; badgeClass: string }> = {
+const PATH_CONFIG: Record<string, { label: string; badgeClass: string }> = {
   programmatic: {
-    icon: "⚡",
-    badge: "programmatic",
-    badgeClass: "bg-green-100 text-green-700",
+    label: "programmatic",
+    badgeClass: "bg-green-500/10 text-green-500",
   },
   visual: {
-    icon: "🎨",
-    badge: "visual",
-    badgeClass: "bg-blue-100 text-blue-700",
+    label: "visual",
+    badgeClass: "bg-blue-500/10 text-blue-500",
   },
   fallback_visual: {
-    icon: "⚠️",
-    badge: "fallback",
-    badgeClass: "bg-orange-100 text-orange-700",
+    label: "fallback",
+    badgeClass: "bg-orange-500/10 text-orange-500",
   },
 };
 
@@ -28,21 +26,32 @@ function OperationRow({ op }: { op: OperationResult }) {
 
   return (
     <div className="flex items-start gap-2 py-1.5">
-      <span className="text-sm shrink-0 leading-5">{config.icon}</span>
-      <div className="flex-1 min-w-0">
+      <span
+        className={cn(
+          "mt-0.5 h-4 w-4 shrink-0 rounded-full text-[9px] font-bold text-white flex items-center justify-center",
+          op.path === "programmatic" ? "bg-green-500" : "bg-blue-500",
+          isFallback && "bg-orange-500",
+        )}
+      >
+        {op.path === "programmatic" ? "P" : isFallback ? "F" : "V"}
+      </span>
+      <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-700 truncate">{op.detail}</span>
-          <span className="text-[10px] text-gray-400 shrink-0 tabular-nums">
+          <span className="truncate text-xs">{op.detail}</span>
+          <span className="shrink-0 font-mono text-[10px] text-muted-foreground tabular-nums">
             {formatTime(op.time_ms)}
           </span>
         </div>
         <span
-          className={`inline-block mt-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${config.badgeClass}`}
+          className={cn(
+            "mt-0.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium",
+            config.badgeClass,
+          )}
         >
-          {config.badge}
+          {config.label}
         </span>
         {isFallback && op.error && (
-          <div className="mt-1 text-[10px] text-orange-600 leading-tight">
+          <div className="mt-1 text-[10px] leading-tight text-orange-500">
             Programmatic edit failed: {op.error} — completed via AI instead
           </div>
         )}
@@ -62,34 +71,30 @@ export default function OperationBreakdown({ result }: { result: ExecutionResult
     .reduce((sum, o) => sum + o.time_ms, 0);
 
   return (
-    <div className="mt-2 rounded-lg border border-gray-200 bg-white text-xs overflow-hidden">
-      {/* Plan summary */}
-      <div className="px-3 py-2 border-b border-gray-100 text-gray-600">
+    <div className="mt-2 overflow-hidden rounded-lg border bg-card text-xs">
+      <div className="border-b px-3 py-2 text-muted-foreground">
         {result.plan_summary}
       </div>
 
-      {/* Hero message for all-programmatic edits */}
       {allProgrammatic && (
-        <div className="px-3 py-2 bg-green-50 border-b border-green-100 text-green-700 font-medium">
-          ✨ Completed in {formatTime(result.total_time_ms)} — no AI model needed
+        <div className="border-b bg-green-500/10 px-3 py-2 font-medium text-green-500">
+          Completed in {formatTime(result.total_time_ms)} — no AI model needed
         </div>
       )}
 
-      {/* Operation list */}
-      <div className="px-3 py-1 divide-y divide-gray-50">
+      <div className="divide-y divide-border px-3 py-1">
         {result.operations.map((op) => (
           <OperationRow key={op.op_index} op={op} />
         ))}
       </div>
 
-      {/* Totals */}
-      <div className="px-3 py-2 border-t border-gray-100 text-[11px] text-gray-500 tabular-nums">
-        {result.operations.length} {result.operations.length === 1 ? "operation" : "operations"}
+      <div className="border-t px-3 py-2 text-[11px] text-muted-foreground tabular-nums font-mono">
+        {result.operations.length} {result.operations.length === 1 ? "op" : "ops"}
         {result.programmatic_count > 0 && result.visual_count > 0 && (
           <>
-            : {result.programmatic_count} programmatic ({formatTime(progTime)})
+            : {result.programmatic_count} prog ({formatTime(progTime)})
             {" + "}
-            {result.visual_count} visual ({formatTime(visTime)})
+            {result.visual_count} vis ({formatTime(visTime)})
             {" = "}
           </>
         )}

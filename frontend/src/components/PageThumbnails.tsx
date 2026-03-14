@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { Session, PageEditType } from "../types";
-import { getPageImageUrl } from "../services/api";
+import type { Session, PageEditType } from "@/types";
+import { getPageImageUrl } from "@/services/api";
+import { cn } from "@/lib/utils";
 
 interface Props {
   session: Session;
@@ -10,7 +11,6 @@ interface Props {
   pageEditTypes?: Record<number, PageEditType>;
 }
 
-const THUMB_WIDTH = 150;
 const BUFFER = 3;
 
 function EditTypeIndicator({ editType }: { editType: PageEditType }) {
@@ -21,20 +21,23 @@ function EditTypeIndicator({ editType }: { editType: PageEditType }) {
   let label: string;
   let bgClass: string;
   if (hasProgram && hasVisual) {
-    label = "⚡🎨";
+    label = "M";
     bgClass = "bg-purple-500";
   } else if (hasProgram) {
-    label = "⚡";
+    label = "P";
     bgClass = "bg-green-500";
   } else {
-    label = "🎨";
+    label = "V";
     bgClass = "bg-blue-500";
   }
 
   return (
     <div
-      className={`absolute top-1.5 right-1.5 z-10 h-5 px-1 rounded-full
-                  ${bgClass} flex items-center justify-center shadow text-[10px] leading-none`}
+      className={cn(
+        "absolute top-0.5 right-0.5 z-10 h-3.5 w-3.5 rounded-full text-[8px] font-bold text-white",
+        "flex items-center justify-center shadow-sm",
+        bgClass,
+      )}
       title={
         hasProgram && hasVisual
           ? "Programmatic + AI edits"
@@ -56,13 +59,13 @@ export default function PageThumbnails({
   pageEditTypes,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [visibleRange, setVisibleRange] = useState({ start: 1, end: 10 });
+  const [visibleRange, setVisibleRange] = useState({ start: 1, end: 20 });
 
   const updateVisibleRange = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
 
-    const itemHeight = 180;
+    const itemHeight = 80;
     const scrollTop = el.scrollTop;
     const viewHeight = el.clientHeight;
 
@@ -85,7 +88,7 @@ export default function PageThumbnails({
     <div
       ref={containerRef}
       onScroll={updateVisibleRange}
-      className="h-full overflow-y-auto bg-gray-900 p-3 space-y-3"
+      className="h-full overflow-y-auto p-1.5 space-y-1.5"
     >
       {pages.map((pageNum) => {
         const isVisible =
@@ -99,35 +102,31 @@ export default function PageThumbnails({
           <button
             key={pageNum}
             onClick={() => onSelectPage(pageNum)}
-            className={`
-              relative block w-full rounded-lg overflow-hidden transition-all
-              ${isSelected
-                ? "ring-2 ring-blue-500 ring-offset-2 ring-offset-gray-900"
-                : "hover:ring-2 hover:ring-gray-500 hover:ring-offset-1 hover:ring-offset-gray-900"
-              }
-            `}
-          >
-            {isEdited && editType && (
-              <EditTypeIndicator editType={editType} />
+            className={cn(
+              "relative block w-full rounded overflow-hidden transition-all",
+              isSelected
+                ? "ring-2 ring-blue-500 ring-offset-1 ring-offset-background"
+                : "hover:ring-1 hover:ring-muted-foreground/40",
             )}
+          >
+            {isEdited && editType && <EditTypeIndicator editType={editType} />}
             {isVisible ? (
               <img
                 src={getPageImageUrl(session.session_id, pageNum, version)}
                 alt={`Page ${pageNum}`}
-                width={THUMB_WIDTH}
                 className="w-full h-auto bg-white"
                 loading="lazy"
               />
             ) : (
-              <div
-                className="bg-gray-700 animate-pulse"
-                style={{ width: THUMB_WIDTH, height: THUMB_WIDTH * 1.4 }}
-              />
+              <div className="w-full aspect-[1/1.4] bg-muted animate-pulse rounded" />
             )}
             <div
-              className={`text-xs py-1 text-center ${
-                isSelected ? "text-blue-400 font-semibold" : "text-gray-400"
-              }`}
+              className={cn(
+                "text-[9px] py-0.5 text-center",
+                isSelected
+                  ? "text-blue-500 font-semibold"
+                  : "text-muted-foreground",
+              )}
             >
               {pageNum}
             </div>

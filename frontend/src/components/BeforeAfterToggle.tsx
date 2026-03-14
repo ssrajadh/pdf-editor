@@ -1,4 +1,5 @@
-import type { PageEditType } from "../types";
+import { cn } from "@/lib/utils";
+import type { PageEditType } from "@/types";
 
 interface Props {
   showOriginal: boolean;
@@ -18,24 +19,26 @@ export default function BeforeAfterToggle({ showOriginal, onToggle, editType }: 
   const label = editLabel(editType);
 
   return (
-    <div className="inline-flex rounded-lg bg-gray-200 p-0.5 text-sm">
+    <div className="inline-flex rounded-lg bg-secondary p-0.5 text-sm">
       <button
         onClick={() => onToggle(true)}
-        className={`px-3 py-1 rounded-md transition-colors font-medium ${
+        className={cn(
+          "px-3 py-1 rounded-md transition-colors font-medium",
           showOriginal
-            ? "bg-white text-gray-900 shadow-sm"
-            : "text-gray-500 hover:text-gray-700"
-        }`}
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground",
+        )}
       >
         Original
       </button>
       <button
         onClick={() => onToggle(false)}
-        className={`px-3 py-1 rounded-md transition-colors font-medium ${
+        className={cn(
+          "px-3 py-1 rounded-md transition-colors font-medium",
           !showOriginal
-            ? "bg-white text-gray-900 shadow-sm"
-            : "text-gray-500 hover:text-gray-700"
-        }`}
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground",
+        )}
       >
         {label}
       </button>

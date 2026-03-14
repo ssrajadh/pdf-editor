@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
-import type { Session, EditProgress, PageEditType } from "../types";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import type { Session, EditProgress, PageEditType } from "@/types";
 import BeforeAfterToggle from "./BeforeAfterToggle";
 
 interface Props {
@@ -44,9 +46,10 @@ export default function PdfViewer({
   }, [displayUrl, retryKey]);
 
   return (
-    <div className="flex-1 flex flex-col items-center bg-gray-100 overflow-auto h-full">
-      <div className="flex items-center gap-4 py-3 px-4 w-full max-w-3xl">
-        <span className="text-sm text-gray-500 font-medium">
+    <div className="flex h-full flex-col items-center overflow-auto bg-muted/30">
+      {/* Top bar with page info and toggle */}
+      <div className="flex w-full max-w-3xl items-center gap-4 px-4 py-3">
+        <span className="text-sm font-medium text-muted-foreground">
           Page {currentPage} of {session.page_count}
         </span>
 
@@ -59,44 +62,54 @@ export default function PdfViewer({
         )}
       </div>
 
+      {/* Page image */}
       <div className="relative w-full max-w-3xl px-4 pb-6">
         {loading && !imgError && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-lg z-10 mx-4">
-            <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+          <div className="absolute inset-0 z-10 mx-4 flex items-center justify-center rounded-lg bg-background/80">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
           </div>
         )}
 
         {isEditing && editProgress && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 rounded-lg z-20 mx-4 backdrop-blur-[2px]">
-            <Loader2 className="w-10 h-10 text-white animate-spin mb-3" />
-            <p className="text-white text-sm font-medium">
+          <div className="absolute inset-0 z-20 mx-4 flex flex-col items-center justify-center rounded-lg bg-black/40 backdrop-blur-[2px]">
+            <Loader2 className="mb-3 h-10 w-10 animate-spin text-white" />
+            <p className="text-sm font-medium text-white">
               {editProgress.message}
             </p>
-            <p className="text-white/60 text-xs mt-1 capitalize">
+            <p className="mt-1 text-xs capitalize text-white/60">
               {editProgress.stage}
             </p>
           </div>
         )}
 
         {imgError ? (
-          <div className="flex flex-col items-center justify-center py-24 bg-white rounded-lg shadow-md">
-            <p className="text-gray-500 text-sm mb-3">Failed to load page image</p>
-            <button
+          <div className="flex flex-col items-center justify-center rounded-lg bg-card py-24 shadow-sm">
+            <p className="mb-3 text-sm text-muted-foreground">
+              Failed to load page image
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setRetryKey((k) => k + 1)}
-              className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
             >
-              <RefreshCw className="w-4 h-4" />
+              <RefreshCw className="mr-1.5 h-4 w-4" />
               Retry
-            </button>
+            </Button>
           </div>
         ) : (
           <img
             key={`${displayUrl}-${retryKey}`}
             src={displayUrl}
             alt={`Page ${currentPage}`}
-            className="w-full h-auto rounded-lg shadow-md bg-white transition-opacity duration-200"
+            className={cn(
+              "w-full h-auto rounded-lg shadow-sm bg-white transition-opacity duration-200",
+              loading && "opacity-0",
+            )}
             onLoad={() => setLoading(false)}
-            onError={() => { setLoading(false); setImgError(true); }}
+            onError={() => {
+              setLoading(false);
+              setImgError(true);
+            }}
           />
         )}
       </div>

@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, CheckCircle2, AlertCircle, Sparkles, RotateCcw, Eye, Play } from "lucide-react";
-import type { ChatMessage } from "../types";
+import {
+  Send, Loader2, CheckCircle2, AlertCircle, Sparkles,
+  RotateCcw, Eye, Play,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import type { ChatMessage } from "@/types";
 import OperationBreakdown from "./OperationBreakdown";
 import ExecutionPlanPreview from "./ExecutionPlanPreview";
 
@@ -62,16 +67,22 @@ export default function ChatPanel({
   };
 
   const lastMessage = messages[messages.length - 1];
-  const showRetry = lastMessage?.role === "assistant" && lastMessage.content.startsWith("Error:") && !isEditing && onRetry;
+  const showRetry =
+    lastMessage?.role === "assistant" &&
+    lastMessage.content.startsWith("Error:") &&
+    !isEditing &&
+    onRetry;
   const busy = isEditing || isPreviewing;
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b bg-white">
-        <h2 className="font-semibold text-gray-900 text-sm">Edit Chat</h2>
-        <p className="text-xs text-gray-400 mt-0.5">Page {currentPage}</p>
+    <div className="flex h-full flex-col">
+      {/* Header */}
+      <div className="border-b bg-background px-4 py-3">
+        <h2 className="text-sm font-semibold">Edit Chat</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">Page {currentPage}</p>
       </div>
 
+      {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && <EmptyState onSelect={(s) => setInput(s)} />}
 
@@ -83,19 +94,16 @@ export default function ChatPanel({
 
         {showRetry && (
           <div className="flex justify-start animate-fade-in">
-            <button
-              onClick={onRetry}
-              className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700
-                         px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
-            >
-              <RotateCcw className="w-3 h-3" />
+            <Button variant="ghost" size="sm" onClick={onRetry} className="gap-1.5 text-xs">
+              <RotateCcw className="h-3 w-3" />
               Retry last edit
-            </button>
+            </Button>
           </div>
         )}
       </div>
 
-      <div className="p-3 border-t bg-white">
+      {/* Input */}
+      <div className="border-t bg-background p-3">
         <div className="flex items-end gap-2">
           <textarea
             value={input}
@@ -104,10 +112,13 @@ export default function ChatPanel({
             placeholder={`Describe your edit for page ${currentPage}...`}
             disabled={busy}
             rows={1}
-            className="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm
-                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                       disabled:bg-gray-100 disabled:text-gray-400
-                       max-h-32 min-h-[38px]"
+            className={cn(
+              "flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm",
+              "placeholder:text-muted-foreground",
+              "focus:outline-none focus:ring-2 focus:ring-ring",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+              "max-h-32 min-h-[38px]",
+            )}
             onInput={(e) => {
               const el = e.currentTarget;
               el.style.height = "auto";
@@ -115,40 +126,36 @@ export default function ChatPanel({
             }}
           />
           {onPreviewPlan && (
-            <button
+            <Button
+              variant="outline"
+              size="icon"
               onClick={handlePreview}
               disabled={busy || !input.trim()}
               title="Preview plan without executing"
-              className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg
-                         border border-gray-300 text-gray-500 hover:text-blue-600
-                         hover:border-blue-300 hover:bg-blue-50
-                         disabled:border-gray-200 disabled:text-gray-300 disabled:cursor-not-allowed
-                         transition-colors"
+              className="h-9 w-9 shrink-0"
             >
               {isPreviewing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Eye className="w-4 h-4" />
+                <Eye className="h-4 w-4" />
               )}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
+            size="icon"
             onClick={handleSubmit}
             disabled={busy || !input.trim()}
             title="Send (Enter)"
-            className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg
-                       bg-blue-600 text-white hover:bg-blue-700
-                       disabled:bg-gray-300 disabled:cursor-not-allowed
-                       transition-colors"
+            className="h-9 w-9 shrink-0 bg-blue-600 text-white hover:bg-blue-700"
           >
             {isEditing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Send className="w-4 h-4" />
+              <Send className="h-4 w-4" />
             )}
-          </button>
+          </Button>
         </div>
-        <p className="text-[10px] text-gray-400 mt-1.5 text-right">
+        <p className="mt-1.5 text-right text-[10px] text-muted-foreground">
           Enter to send &middot; Shift+Enter for newline
         </p>
       </div>
@@ -158,10 +165,10 @@ export default function ChatPanel({
 
 function EmptyState({ onSelect }: { onSelect: (s: string) => void }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full text-center gap-4 py-8">
-      <Sparkles className="w-10 h-10 text-gray-300" />
+    <div className="flex h-full flex-col items-center justify-center gap-4 py-8 text-center">
+      <Sparkles className="h-10 w-10 text-muted-foreground/30" />
       <div>
-        <p className="text-sm text-gray-500 mb-4">
+        <p className="mb-4 text-sm text-muted-foreground">
           Describe how you'd like to edit this page
         </p>
         <div className="space-y-2">
@@ -169,9 +176,12 @@ function EmptyState({ onSelect }: { onSelect: (s: string) => void }) {
             <button
               key={s}
               onClick={() => onSelect(s)}
-              className="block w-full text-left text-xs px-3 py-2 rounded-lg
-                         bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-700
-                         transition-colors"
+              className={cn(
+                "block w-full text-left text-xs px-3 py-2 rounded-md",
+                "bg-secondary text-secondary-foreground",
+                "hover:bg-accent hover:text-accent-foreground",
+                "transition-colors",
+              )}
             >
               "{s}"
             </button>
@@ -188,28 +198,24 @@ function ProgressBubble({ message }: { message: ChatMessage }) {
   const isSlowPhase = stage === "generating";
 
   const hasOpInfo = op_index !== undefined && total_ops !== undefined && total_ops > 0;
-  const phaseIcon = isFastPhase ? "⚡" : isSlowPhase ? "🎨" : null;
 
   return (
     <div className="flex justify-center">
       <div
-        className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-full transition-colors ${
+        className={cn(
+          "flex items-center gap-2 text-xs px-3 py-1.5 rounded-full transition-colors",
           isFastPhase
-            ? "text-green-700 bg-green-50"
+            ? "text-green-400 bg-green-500/10"
             : isSlowPhase
-              ? "text-blue-700 bg-blue-50"
-              : "text-gray-500 bg-gray-100"
-        }`}
+              ? "text-blue-400 bg-blue-500/10"
+              : "text-muted-foreground bg-muted",
+        )}
       >
-        <Loader2
-          className={`w-3 h-3 animate-spin ${
-            isFastPhase ? "text-green-500" : isSlowPhase ? "text-blue-500" : ""
-          }`}
-        />
+        <Loader2 className="h-3 w-3 animate-spin" />
         <span>
           {hasOpInfo && (
-            <span className="font-medium">
-              {phaseIcon} {op_index + 1}/{total_ops}:{" "}
+            <span className="font-medium font-mono">
+              {(op_index ?? 0) + 1}/{total_ops}:{" "}
             </span>
           )}
           {message.content}
@@ -229,61 +235,73 @@ function PlanPreviewCard({
   const plan = message.plan!;
 
   const TYPE_LABELS: Record<string, { icon: string; label: string }> = {
-    text_replace: { icon: "⚡", label: "Text Replace" },
-    style_change: { icon: "⚡", label: "Style Change" },
-    visual_regenerate: { icon: "🎨", label: "Visual Edit" },
+    text_replace: { icon: "P", label: "Text Replace" },
+    style_change: { icon: "P", label: "Style Change" },
+    visual_regenerate: { icon: "V", label: "Visual Edit" },
   };
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[95%] px-3 py-2 rounded-2xl rounded-bl-md text-sm bg-gray-100 text-gray-800">
-        <div className="flex items-center gap-1.5 mb-2">
-          <Eye className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+      <div className="max-w-[95%] rounded-2xl rounded-bl-md bg-muted px-3 py-2 text-sm">
+        <div className="mb-2 flex items-center gap-1.5">
+          <Eye className="h-3.5 w-3.5 shrink-0 text-blue-500" />
           <span className="font-medium">Plan Preview</span>
         </div>
 
-        <div className="rounded-lg border border-gray-200 bg-white text-xs overflow-hidden">
-          <div className="px-3 py-2 border-b border-gray-100 text-gray-600 font-medium">
+        <div className="overflow-hidden rounded-lg border bg-card text-xs">
+          <div className="border-b px-3 py-2 font-medium text-card-foreground">
             {plan.summary}
           </div>
 
           {plan.all_programmatic && (
-            <div className="px-3 py-1.5 bg-green-50 border-b border-green-100 text-green-700 text-[11px] font-medium">
-              ⚡ Fast path — all operations are programmatic
+            <div className="border-b bg-green-500/10 px-3 py-1.5 text-[11px] font-medium text-green-500">
+              Fast path — all operations are programmatic
             </div>
           )}
 
-          <div className="px-3 py-1 divide-y divide-gray-50">
+          <div className="divide-y divide-border px-3 py-1">
             {plan.operations.map((op, idx) => {
               const config = TYPE_LABELS[op.type] ?? TYPE_LABELS.visual_regenerate;
               return (
                 <div key={idx} className="py-1.5">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm">{config.icon}</span>
-                    <span className="font-medium text-gray-700">
+                    <span
+                      className={cn(
+                        "h-4 w-4 rounded-full text-[9px] font-bold text-white flex items-center justify-center",
+                        op.type === "visual_regenerate" ? "bg-blue-500" : "bg-green-500",
+                      )}
+                    >
+                      {config.icon}
+                    </span>
+                    <span className="font-medium">
                       #{idx + 1} {config.label}
                     </span>
                     <span
-                      className={`ml-auto text-[10px] font-medium tabular-nums ${
+                      className={cn(
+                        "ml-auto font-mono text-[10px] font-medium tabular-nums",
                         op.confidence >= 0.8
-                          ? "text-green-600"
+                          ? "text-green-500"
                           : op.confidence >= 0.5
-                            ? "text-yellow-600"
-                            : "text-red-500"
-                      }`}
+                            ? "text-yellow-500"
+                            : "text-red-500",
+                      )}
                     >
                       {Math.round(op.confidence * 100)}%
                     </span>
                   </div>
                   {op.type === "text_replace" && op.original_text && (
-                    <div className="text-[10px] text-gray-500 ml-6 mt-0.5 space-y-0.5">
+                    <div className="ml-6 mt-0.5 space-y-0.5 text-[10px] text-muted-foreground">
                       <div>
-                        <span className="font-mono bg-red-50 text-red-600 px-1 rounded">{op.original_text}</span>
+                        <span className="rounded bg-red-500/10 px-1 font-mono text-red-400">
+                          {op.original_text}
+                        </span>
                         {" → "}
-                        <span className="font-mono bg-green-50 text-green-600 px-1 rounded">{op.replacement_text}</span>
+                        <span className="rounded bg-green-500/10 px-1 font-mono text-green-400">
+                          {op.replacement_text}
+                        </span>
                       </div>
                       {(op.context_before || op.context_after) && (
-                        <div className="text-gray-400">
+                        <div className="text-muted-foreground/60">
                           context: {op.context_before && <span>…{op.context_before}</span>}
                           <span className="font-medium">[target]</span>
                           {op.context_after && <span>{op.context_after}…</span>}
@@ -291,7 +309,7 @@ function PlanPreviewCard({
                       )}
                     </div>
                   )}
-                  <div className="text-[10px] text-gray-400 ml-6 mt-0.5">
+                  <div className="ml-6 mt-0.5 text-[10px] text-muted-foreground/60">
                     {op.reasoning}
                   </div>
                 </div>
@@ -299,24 +317,23 @@ function PlanPreviewCard({
             })}
           </div>
 
-          <div className="px-3 py-2 border-t border-gray-100 text-[11px] text-gray-500 space-y-1">
+          <div className="space-y-1 border-t px-3 py-2 text-[11px] text-muted-foreground">
             <div>Order: {plan.execution_order.map((i) => `#${i + 1}`).join(" → ")}</div>
             {plan.page_analysis && (
-              <div className="text-gray-400 italic">{plan.page_analysis}</div>
+              <div className="italic text-muted-foreground/60">{plan.page_analysis}</div>
             )}
           </div>
         </div>
 
         {onExecute && message.previewPrompt && (
-          <button
+          <Button
+            size="sm"
             onClick={() => onExecute(message.previewPrompt!)}
-            className="mt-2 flex items-center gap-1.5 text-xs font-medium text-white
-                       bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg
-                       transition-colors w-full justify-center"
+            className="mt-2 w-full gap-1.5 bg-blue-600 text-white hover:bg-blue-700"
           >
-            <Play className="w-3 h-3" />
+            <Play className="h-3 w-3" />
             Execute this plan
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -333,7 +350,7 @@ function MessageBubble({
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] bg-blue-600 text-white px-3 py-2 rounded-2xl rounded-br-md text-sm whitespace-pre-wrap">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-blue-600 px-3 py-2 text-sm text-white whitespace-pre-wrap">
           {message.content}
         </div>
       </div>
@@ -354,22 +371,23 @@ function MessageBubble({
   return (
     <div className="flex justify-start">
       <div
-        className={`max-w-[95%] px-3 py-2 rounded-2xl rounded-bl-md text-sm ${
-          isError ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-800"
-        }`}
+        className={cn(
+          "max-w-[95%] rounded-2xl rounded-bl-md px-3 py-2 text-sm",
+          isError ? "bg-destructive/10 text-red-400" : "bg-muted text-foreground",
+        )}
       >
         <div className="flex items-center gap-1.5">
           {isError ? (
-            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
           ) : (
-            <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
           )}
           <span>{message.content}</span>
         </div>
 
         {result && (
           <>
-            <div className="mt-1 text-xs text-gray-500">
+            <div className="mt-1 text-xs text-muted-foreground">
               Version {result.version}
             </div>
             <OperationBreakdown result={result} />
