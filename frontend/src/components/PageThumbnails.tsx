@@ -67,7 +67,7 @@ function Thumbnail({
         <button
           onClick={onSelect}
           className={cn(
-            "group relative mx-auto mb-1.5 block w-[48px] rounded-sm transition-colors",
+            "group relative mx-auto mb-2 block w-[72px] rounded-sm transition-colors overflow-hidden",
             !isSelected && "hover:bg-muted",
           )}
         >
@@ -92,7 +92,7 @@ function Thumbnail({
 
           {/* Edit indicator dots */}
           {(showProg || showVis) && (
-            <div className="absolute -top-0.5 -right-0.5 flex gap-[2px]">
+            <div className="absolute top-1 right-1 flex gap-[2px]">
               {showProg && (
                 <div className="h-2 w-2 rounded-full border border-background bg-blue-500" />
               )}
@@ -105,7 +105,7 @@ function Thumbnail({
           {/* Page number */}
           <span
             className={cn(
-              "mt-0.5 block text-center text-[10px] tabular-nums leading-tight",
+              "mt-1 block text-center text-xs tabular-nums leading-tight",
               isSelected
                 ? "font-medium text-primary"
                 : "text-muted-foreground",
@@ -143,7 +143,7 @@ export default function PageThumbnails({
 
   return (
     <ScrollArea className="h-full">
-      <div className="py-2 px-1.5">
+      <div className="py-2 px-[14px]">
         {pages.map((pageNum) => {
           const version = pageVersions?.[pageNum];
           const hasEdit = version !== undefined && version > 0;

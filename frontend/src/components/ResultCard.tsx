@@ -99,7 +99,7 @@ function OperationRows({ ops }: { ops: OperationResult[] }) {
             </span>
             <span
               className={cn(
-                "flex-1 min-w-0 text-[12px] truncate",
+                "flex-1 min-w-0 text-[12px] whitespace-normal break-words",
                 op.path === "blocked" && "text-red-400",
               )}
             >
@@ -113,7 +113,7 @@ function OperationRows({ ops }: { ops: OperationResult[] }) {
             </Badge>
           </div>
           {op.path === "fallback_visual" && op.error && (
-            <p className="ml-6 -mt-0.5 mb-1 text-[10px] text-orange-400/70">
+            <p className="ml-6 -mt-0.5 mb-1 text-[10px] text-orange-400/70 break-words">
               Programmatic failed: {op.error}
             </p>
           )}
@@ -137,13 +137,10 @@ function PlanDetails({ plan }: { plan: ExecutionPlan }) {
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        <div className="mt-1 rounded border bg-background px-2.5 py-2 text-[11px] space-y-2 animate-fade-in">
+        <div className="mt-1 rounded border bg-background px-2.5 py-2 text-[11px] space-y-2 animate-fade-in break-words">
           {/* Execution order */}
           <div className="font-mono text-[10px] text-muted-foreground">
-            order: {plan.execution_order.map((i) => `#${i + 1}`).join(" → ")}
-            {plan.all_programmatic && (
-              <span className="ml-1.5 text-emerald-500 font-medium">fast path</span>
-            )}
+            <pre className="overflow-x-auto whitespace-pre"><span>order: {plan.execution_order.map((i) => `#${i + 1}`).join(" → ")}</span>{plan.all_programmatic && (<span className="ml-1.5 text-emerald-500 font-medium">fast path</span>)}</pre>
           </div>
 
           {/* Per-operation detail */}
@@ -153,7 +150,7 @@ function PlanDetails({ plan }: { plan: ExecutionPlan }) {
 
           {/* Page analysis */}
           {plan.page_analysis && (
-            <p className="text-[10px] text-muted-foreground/50 italic border-t pt-1.5">
+            <p className="text-[10px] text-muted-foreground/50 italic border-t pt-1.5 break-words">
               {plan.page_analysis}
             </p>
           )}
@@ -200,7 +197,7 @@ function PlanOpDetail({ op, idx }: { op: PlanOperation; idx: number }) {
 
       {/* Text replace diff */}
       {op.type === "text_replace" && op.original_text && (
-        <div className="ml-5.5 mt-0.5 font-mono text-[10px]">
+        <div className="ml-5.5 mt-0.5 font-mono text-[10px] break-words">
           <span className="rounded-sm bg-red-500/10 px-0.5 text-red-400">
             {op.original_text}
           </span>
@@ -213,7 +210,7 @@ function PlanOpDetail({ op, idx }: { op: PlanOperation; idx: number }) {
 
       {/* Context */}
       {op.type === "text_replace" && (op.context_before || op.context_after) && (
-        <div className="ml-5.5 text-[10px] text-muted-foreground/40 font-mono">
+        <div className="ml-5.5 text-[10px] text-muted-foreground/40 font-mono break-words">
           {op.context_before && <span>…{op.context_before}</span>}
           <span className="text-muted-foreground/60">[match]</span>
           {op.context_after && <span>{op.context_after}…</span>}
@@ -222,7 +219,7 @@ function PlanOpDetail({ op, idx }: { op: PlanOperation; idx: number }) {
 
       {/* Style change */}
       {op.type === "style_change" && op.target_text && (
-        <div className="ml-5.5 text-[10px] text-muted-foreground font-mono">
+        <div className="ml-5.5 text-[10px] text-muted-foreground font-mono break-words">
           target: {op.target_text}
           {op.changes && (
             <span className="text-muted-foreground/40">
@@ -234,13 +231,13 @@ function PlanOpDetail({ op, idx }: { op: PlanOperation; idx: number }) {
 
       {/* Visual prompt */}
       {op.type === "visual_regenerate" && op.prompt && (
-        <div className="ml-5.5 text-[10px] italic text-muted-foreground">
+        <div className="ml-5.5 text-[10px] italic text-muted-foreground break-words">
           "{op.prompt}"
         </div>
       )}
 
       {/* Reasoning */}
-      <p className="ml-5.5 mt-0.5 text-[10px] text-muted-foreground/40">
+      <p className="ml-5.5 mt-0.5 text-[10px] text-muted-foreground/40 break-words">
         {op.reasoning}
       </p>
     </div>
@@ -283,7 +280,7 @@ export default function ResultCard({
           </div>
         )}
 
-        <div className="px-3 py-2.5 space-y-2">
+        <div className="px-3 py-2.5 space-y-2 break-words [word-break:break-word]">
           {blockedOps.length > 0 && (
             <div className="space-y-2">
               {blockedOps.map((op, idx) => {
@@ -300,7 +297,7 @@ export default function ResultCard({
                     key={`blocked-${idx}`}
                     className="border-destructive/30 bg-destructive/5 px-3 py-2"
                   >
-                    <div className="text-[12px] font-medium text-red-400">
+                    <div className="text-[12px] font-medium text-red-400 break-words">
                       🛑 Visual edit blocked
                       {density !== null && (
                         <span className="text-red-400/80">
@@ -308,10 +305,10 @@ export default function ResultCard({
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-muted-foreground">
+                    <p className="text-[11px] text-muted-foreground break-words">
                       AI regeneration would corrupt the text content.
                     </p>
-                    <p className="text-[11px] text-muted-foreground">
+                    <p className="text-[11px] text-muted-foreground break-words">
                       Suggestion: try rephrasing as a text or style change.
                     </p>
                     {canOverride && (
@@ -342,7 +339,7 @@ export default function ResultCard({
 
           {/* Plan summary text */}
           {result.plan_summary && (
-            <p className="text-[12px] text-muted-foreground">
+            <p className="text-[12px] text-muted-foreground break-words">
               {result.plan_summary}
             </p>
           )}

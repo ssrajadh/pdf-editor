@@ -11,7 +11,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import type { Session } from "@/types";
 
 interface HeaderProps {
-  session: Session;
+  session: Session | null;
   currentPage: number;
   hasEdits: boolean;
   exporting: boolean;
@@ -47,16 +47,18 @@ export default function Header({
       {/* Center: file context */}
       <div className="flex items-center gap-2 text-[13px] text-muted-foreground min-w-0">
         <span className="truncate max-w-[240px] font-medium text-foreground">
-          {session.filename}
+          {session ? session.filename : "No file loaded"}
         </span>
-        <Badge variant="secondary" className="rounded px-1.5 py-0 text-[11px] font-mono h-5 shrink-0">
-          {currentPage}/{session.page_count}
-        </Badge>
+        {session && (
+          <Badge variant="secondary" className="rounded px-1.5 py-0 text-[11px] font-mono h-5 shrink-0">
+            {currentPage}/{session.page_count}
+          </Badge>
+        )}
       </div>
 
       {/* Right: toolbar */}
       <div className="ml-auto flex items-center">
-        {hasEdits && (
+        {session && hasEdits && (
           <>
             <Tooltip>
               <TooltipTrigger asChild>

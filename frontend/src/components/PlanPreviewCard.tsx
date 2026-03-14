@@ -24,8 +24,8 @@ export default function PlanPreviewCard({
           Plan Preview
         </div>
 
-        <div className="px-3 py-2.5 space-y-2">
-          <p className="text-[12px]">{plan.summary}</p>
+        <div className="px-3 py-2.5 space-y-2 break-words [word-break:break-word]">
+          <p className="text-[12px] break-words">{plan.summary}</p>
 
           {plan.all_programmatic && (
             <Badge
@@ -53,7 +53,7 @@ export default function PlanPreviewCard({
                     {idx + 1}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 text-[12px]">
+                    <div className="flex items-center gap-1.5 text-[12px] break-words">
                       <span>
                         {isVisual ? "🎨" : "⚡"}{" "}
                         {op.type === "text_replace"
@@ -77,7 +77,7 @@ export default function PlanPreviewCard({
                     </div>
 
                     {op.type === "text_replace" && op.original_text && (
-                      <div className="mt-0.5 font-mono text-[10px]">
+                      <div className="mt-0.5 font-mono text-[10px] break-words">
                         <span className="rounded-sm bg-red-500/10 px-0.5 text-red-400">
                           {op.original_text}
                         </span>
@@ -88,7 +88,7 @@ export default function PlanPreviewCard({
                       </div>
                     )}
 
-                    <p className="mt-0.5 text-[10px] text-muted-foreground/40">
+                    <p className="mt-0.5 text-[10px] text-muted-foreground/40 break-words">
                       {op.reasoning}
                     </p>
                   </div>
@@ -101,7 +101,7 @@ export default function PlanPreviewCard({
 
           {/* Footer: order + execute button */}
           <div className="text-[10px] font-mono text-muted-foreground">
-            order: {plan.execution_order.map((i) => `#${i + 1}`).join(" → ")}
+            <pre className="overflow-x-auto whitespace-pre">order: {plan.execution_order.map((i) => `#${i + 1}`).join(" → ")}</pre>
           </div>
 
           {onExecute && message.previewPrompt && (

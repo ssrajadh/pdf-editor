@@ -20,6 +20,7 @@ interface Props {
   isPreviewing?: boolean;
   history?: PageHistoryResponse | null;
   isReverting?: boolean;
+  hasSession: boolean;
   onSendEdit: (prompt: string) => void;
   onForceEdit?: (prompt: string) => void;
   onPreviewPlan?: (prompt: string) => void;
@@ -41,6 +42,7 @@ export default function ChatPanel({
   isPreviewing,
   history,
   isReverting,
+  hasSession,
   onSendEdit,
   onForceEdit,
   onPreviewPlan,
@@ -59,14 +61,14 @@ export default function ChatPanel({
 
   const handleSubmit = () => {
     const text = input.trim();
-    if (!text || isEditing || isPreviewing) return;
+    if (!text || isEditing || isPreviewing || !hasSession) return;
     setInput("");
     onSendEdit(text);
   };
 
   const handlePreview = () => {
     const text = input.trim();
-    if (!text || isEditing || isPreviewing || !onPreviewPlan) return;
+    if (!text || isEditing || isPreviewing || !onPreviewPlan || !hasSession) return;
     setInput("");
     onPreviewPlan(text);
   };
@@ -85,16 +87,19 @@ export default function ChatPanel({
     !isEditing &&
     onRetry;
   const busy = isEditing || isPreviewing;
+  const disabled = busy || !hasSession;
 
   const editCount = messages.filter(
     (m) => m.role === "assistant" && m.result,
   ).length;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col overflow-hidden">
       {/* ---- Header ---- */}
       <div className="px-3 pt-3 pb-0 shrink-0 select-none">
-        <h2 className="text-[13px] font-semibold">Page {currentPage}</h2>
+        <h2 className="text-[13px] font-semibold">
+          {hasSession ? `Page ${currentPage}` : "No document"}
+        </h2>
         {editCount > 0 && (
           <p className="text-[11px] text-muted-foreground">
             {editCount} {editCount === 1 ? "edit" : "edits"}
@@ -125,7 +130,7 @@ export default function ChatPanel({
       {/* ---- Messages ---- */}
       <ScrollArea className="flex-1">
         <div ref={scrollRef} className="p-3 space-y-3">
-          {messages.length === 0 && <EmptyState />}
+          {messages.length === 0 && <EmptyState hasSession={hasSession} />}
 
           {messages.map((msg) => (
             <div key={msg.id} className="animate-fade-in">
@@ -168,8 +173,14 @@ export default function ChatPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={busy ? "Editing..." : "Describe your edit..."}
-            disabled={busy}
+            placeholder={
+              busy
+                ? "Editing..."
+                : hasSession
+                  ? "Describe your edit..."
+                  : "Upload a PDF first..."
+            }
+            disabled={disabled}
             rows={1}
             className={cn(
               "flex-1 resize-none rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px]",
@@ -190,7 +201,7 @@ export default function ChatPanel({
                 variant="outline"
                 size="icon"
                 onClick={handlePreview}
-                disabled={busy || !input.trim()}
+                disabled={disabled || !input.trim()}
                 title="Preview plan"
                 className="h-8 w-8 shrink-0"
               >
@@ -204,7 +215,7 @@ export default function ChatPanel({
             <Button
               size="icon"
               onClick={handleSubmit}
-              disabled={busy || !input.trim()}
+              disabled={disabled || !input.trim()}
               title="Send (Enter)"
               className="h-8 w-8 shrink-0"
             >
@@ -218,7 +229,7 @@ export default function ChatPanel({
         </div>
 
         {/* Suggestion chips — only on empty conversations */}
-        {messages.length === 0 && (
+        {hasSession && messages.length === 0 && (
           <div className="mt-2 flex flex-wrap gap-1">
             {SUGGESTION_CHIPS.map((chip) => (
               <Button
@@ -246,7 +257,29 @@ export default function ChatPanel({
    Sub-components
    ================================================================ */
 
-function EmptyState() {
+function EmptyState({ hasSession }: { hasSession: boolean }) {
+  if (!hasSession) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center select-none px-4">
+        <div className="mb-3 rounded-xl bg-muted p-4">
+          <Pencil className="h-6 w-6 text-muted-foreground/40" />
+        </div>
+        <p className="text-[13px] font-medium">Start by uploading a PDF</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          Then type an edit instruction here
+        </p>
+        <div className="mt-4 w-full space-y-2 text-left text-[11px] text-muted-foreground">
+          <div className="rounded-md border bg-background px-2.5 py-2">
+            ⚡ “Change 2024 to 2025” — instant programmatic edit
+          </div>
+          <div className="rounded-md border bg-background px-2.5 py-2">
+            🎨 “Redesign the chart” — AI-powered visual edit
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center py-16 select-none">
       <div className="mb-3 rounded-xl bg-muted p-4">
@@ -264,7 +297,7 @@ function UserBubble({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[85%]">
-        <div className="rounded-lg rounded-br-sm bg-primary px-3 py-2 text-[13px] text-primary-foreground whitespace-pre-wrap">
+        <div className="rounded-lg rounded-br-sm bg-primary px-3 py-2 text-[13px] text-primary-foreground whitespace-pre-wrap break-words">
           {message.content}
         </div>
         <p className="mt-0.5 text-right text-[10px] text-muted-foreground/40">
@@ -320,7 +353,7 @@ function ErrorOrTextBubble({ message }: { message: ChatMessage }) {
     return (
       <div className="flex justify-start">
         <Card className="max-w-[95%] border-destructive/30 bg-destructive/5 px-3 py-2">
-          <div className="flex items-start gap-1.5 text-[13px] text-red-400">
+          <div className="flex items-start gap-1.5 text-[13px] text-red-400 break-words">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{message.content.replace(/^Error:\s*/, "")}</span>
           </div>
@@ -331,7 +364,7 @@ function ErrorOrTextBubble({ message }: { message: ChatMessage }) {
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[95%] text-[13px] text-muted-foreground">
+      <div className="max-w-[95%] text-[13px] text-muted-foreground break-words">
         {message.content}
       </div>
     </div>

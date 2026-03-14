@@ -49,8 +49,8 @@ export default function PdfViewer({
   return (
     <div className="flex h-full flex-col bg-canvas">
       {/* ---- Canvas area ---- */}
-      <div className="flex-1 overflow-auto flex items-start justify-center p-6">
-        <div className="relative w-full max-w-2xl">
+      <div className="flex-1 overflow-auto flex items-center justify-center p-6">
+        <div className="relative w-full max-w-2xl max-w-full overflow-hidden">
           {/* Skeleton / loading pulse */}
           {loading && !imgError && (
             <div className="absolute inset-0 z-10 flex items-center justify-center rounded-sm">
@@ -93,7 +93,7 @@ export default function PdfViewer({
               src={displayUrl}
               alt={`Page ${currentPage}`}
               className={cn(
-                "w-full h-auto object-contain bg-white rounded-sm",
+                "w-auto max-w-full h-auto max-h-[calc(100vh-220px)] object-contain bg-white rounded-sm",
                 "shadow-[0_2px_12px_rgba(0,0,0,0.25)]",
                 "transition-opacity duration-150",
                 loading ? "opacity-0" : "opacity-100",
