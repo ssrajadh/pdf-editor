@@ -236,5 +236,35 @@ class ExecutionResult(BaseModel):
     text_layer_source: Literal["original", "programmatic_edit", "mixed", "ocr"]
 
 
+# ---------------------------------------------------------------------------
+# State stack / history response models
+# ---------------------------------------------------------------------------
+
+
+class PageSnapshotResponse(BaseModel):
+    """API response for a snapshot — excludes internal fields."""
+
+    step: int
+    timestamp: datetime
+    prompt: str | None
+    plan_summary: str | None
+    operations_summary: list[OperationResult] | None
+    image_url: str
+    text_layer_source: str
+    is_current: bool
+
+
+class PageHistoryResponse(BaseModel):
+    session_id: str
+    page_num: int
+    current_step: int
+    total_steps: int
+    snapshots: list[PageSnapshotResponse]
+
+
+class RevertRequest(BaseModel):
+    step: int
+
+
 # Resolve forward references
 EditVersion.model_rebuild()

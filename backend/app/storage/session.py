@@ -64,6 +64,39 @@ class SessionManager:
             shutil.copy2(session_path / "original.pdf", working)
         return working
 
+    # ------------------------------------------------------------------
+    # History / state-stack helpers
+    # ------------------------------------------------------------------
+
+    def get_history_path(self, session_id: str, page_num: int) -> Path:
+        """Returns {session_dir}/history/page_{num}/, creating it if needed."""
+        path = self.get_session_path(session_id) / "history" / f"page_{page_num}"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def save_working_pdf_copy(self, session_id: str, step: int) -> Path:
+        """Copy the current working.pdf (or original.pdf) to history/working_step_{step}.pdf"""
+        session_path = self.get_session_path(session_id)
+        history_dir = session_path / "history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+
+        dest = history_dir / f"working_step_{step}.pdf"
+
+        working = session_path / "working.pdf"
+        source = working if working.exists() else session_path / "original.pdf"
+        shutil.copy2(source, dest)
+        return dest
+
+    def restore_working_pdf_from_step(self, session_id: str, step: int) -> None:
+        """Copy history/working_step_{step}.pdf back to working.pdf"""
+        session_path = self.get_session_path(session_id)
+        source = session_path / "history" / f"working_step_{step}.pdf"
+        if not source.exists():
+            raise FileNotFoundError(
+                f"No stored PDF for step {step} in session {session_id}"
+            )
+        shutil.copy2(source, session_path / "working.pdf")
+
     def cleanup_session(self, session_id: str) -> None:
         """Delete all session data."""
         path = self._storage_path / session_id

@@ -7,18 +7,21 @@ from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.models.schemas import (
+    TextBlock,
     UploadResponse,
     PageTextResponse,
     SessionInfoResponse,
     TextLayerResponse,
 )
 from app.services import pdf_service
+from app.services.state_manager import StateManager
 from app.storage.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 session_mgr = SessionManager(settings.storage_path)
+state_mgr = StateManager(session_mgr)
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -68,7 +71,20 @@ async def upload_pdf(file: UploadFile = File(...)):
     pdf_path = session_path / "original.pdf"
     pages_dir = session_path / "pages"
 
-    await pdf_service.render_all_pages_async(pdf_path, pages_dir)
+    rendered_pages = await pdf_service.render_all_pages_async(pdf_path, pages_dir)
+
+    # Initialize state stack for each page with step 0 snapshots
+    for i in range(1, page_count + 1):
+        try:
+            text_data = pdf_service.extract_text(pdf_path, i)
+            text_blocks = [
+                TextBlock(**b) for b in text_data["blocks"]
+            ]
+        except Exception:
+            text_blocks = None
+
+        image_filename = str(rendered_pages[i - 1]) if i <= len(rendered_pages) else ""
+        state_mgr.initialize_page(session_id, i, image_filename, text_blocks)
 
     return UploadResponse(session_id=session_id, filename=file.filename, page_count=page_count)
 
