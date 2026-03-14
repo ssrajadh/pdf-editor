@@ -1,13 +1,16 @@
 import { useState, useRef, useEffect } from "react";
 import {
-  Send, Loader2, CheckCircle2, AlertCircle, Sparkles,
-  RotateCcw, Eye, Play,
+  Send, Loader2, AlertCircle, Pencil,
+  RotateCcw, Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types";
-import OperationBreakdown from "./OperationBreakdown";
-import ExecutionPlanPreview from "./ExecutionPlanPreview";
+import ResultCard from "./ResultCard";
+import PlanPreviewCard from "./PlanPreviewCard";
 
 interface Props {
   messages: ChatMessage[];
@@ -20,11 +23,10 @@ interface Props {
   onRetry?: () => void;
 }
 
-const SUGGESTIONS = [
-  "Change the title to Q4 Results",
-  "Make the background light blue",
-  "Remove the watermark",
-  "Increase the font size of all headings",
+const SUGGESTION_CHIPS = [
+  { label: "Change a date", template: "Change the date to " },
+  { label: "Fix a typo", template: "Fix the typo: change '' to ''" },
+  { label: "Redesign a section", template: "Redesign the " },
 ];
 
 export default function ChatPanel({
@@ -40,6 +42,7 @@ export default function ChatPanel({
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll on new messages
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -74,119 +77,178 @@ export default function ChatPanel({
     onRetry;
   const busy = isEditing || isPreviewing;
 
+  const editCount = messages.filter(
+    (m) => m.role === "assistant" && m.result,
+  ).length;
+
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="border-b bg-background px-4 py-3">
-        <h2 className="text-sm font-semibold">Edit Chat</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">Page {currentPage}</p>
-      </div>
-
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.length === 0 && <EmptyState onSelect={(s) => setInput(s)} />}
-
-        {messages.map((msg) => (
-          <div key={msg.id} className="animate-fade-in">
-            <MessageBubble message={msg} onExecutePlan={onExecutePlan} />
-          </div>
-        ))}
-
-        {showRetry && (
-          <div className="flex justify-start animate-fade-in">
-            <Button variant="ghost" size="sm" onClick={onRetry} className="gap-1.5 text-xs">
-              <RotateCcw className="h-3 w-3" />
-              Retry last edit
-            </Button>
-          </div>
+      {/* ---- Header ---- */}
+      <div className="px-3 pt-3 pb-0 shrink-0 select-none">
+        <h2 className="text-[13px] font-semibold">Page {currentPage}</h2>
+        {editCount > 0 && (
+          <p className="text-[11px] text-muted-foreground">
+            {editCount} {editCount === 1 ? "edit" : "edits"}
+          </p>
         )}
       </div>
+      <Separator className="mt-2" />
 
-      {/* Input */}
-      <div className="border-t bg-background p-3">
-        <div className="flex items-end gap-2">
+      {/* ---- Progress bar (indeterminate) ---- */}
+      {isEditing && (
+        <div className="h-[2px] w-full overflow-hidden bg-muted shrink-0">
+          <div className="h-full w-1/3 animate-progress rounded-full bg-blue-500" />
+        </div>
+      )}
+
+      {/* ---- Messages ---- */}
+      <ScrollArea className="flex-1">
+        <div ref={scrollRef} className="p-3 space-y-3">
+          {messages.length === 0 && <EmptyState />}
+
+          {messages.map((msg) => (
+            <div key={msg.id} className="animate-fade-in">
+              {msg.role === "user" && <UserBubble message={msg} />}
+              {msg.role === "progress" && <ProgressBubble message={msg} />}
+              {msg.role === "assistant" && msg.isPlanPreview && msg.plan && (
+                <PlanPreviewCard message={msg} onExecute={onExecutePlan} />
+              )}
+              {msg.role === "assistant" && !msg.isPlanPreview && (
+                msg.result ? (
+                  <ResultCard message={msg} />
+                ) : (
+                  <ErrorOrTextBubble message={msg} />
+                )
+              )}
+            </div>
+          ))}
+
+          {showRetry && (
+            <div className="animate-fade-in">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onRetry}
+                className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Retry last edit
+              </Button>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+
+      {/* ---- Input area ---- */}
+      <Separator />
+      <div className="bg-panel p-2.5 shrink-0">
+        <div className="flex items-end gap-1.5">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Describe your edit for page ${currentPage}...`}
+            placeholder={busy ? "Editing..." : "Describe your edit..."}
             disabled={busy}
             rows={1}
             className={cn(
-              "flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm",
-              "placeholder:text-muted-foreground",
-              "focus:outline-none focus:ring-2 focus:ring-ring",
-              "disabled:cursor-not-allowed disabled:opacity-50",
-              "max-h-32 min-h-[38px]",
+              "flex-1 resize-none rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px]",
+              "placeholder:text-muted-foreground/40",
+              "focus:outline-none focus:ring-1 focus:ring-ring",
+              "disabled:cursor-not-allowed disabled:opacity-40",
+              "max-h-[104px] min-h-[34px]",
             )}
             onInput={(e) => {
               const el = e.currentTarget;
               el.style.height = "auto";
-              el.style.height = Math.min(el.scrollHeight, 128) + "px";
+              el.style.height = Math.min(el.scrollHeight, 104) + "px";
             }}
           />
-          {onPreviewPlan && (
+          <div className="flex gap-1">
+            {onPreviewPlan && (
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handlePreview}
+                disabled={busy || !input.trim()}
+                title="Preview plan"
+                className="h-8 w-8 shrink-0"
+              >
+                {isPreviewing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            )}
             <Button
-              variant="outline"
               size="icon"
-              onClick={handlePreview}
+              onClick={handleSubmit}
               disabled={busy || !input.trim()}
-              title="Preview plan without executing"
-              className="h-9 w-9 shrink-0"
+              title="Send (Enter)"
+              className="h-8 w-8 shrink-0"
             >
-              {isPreviewing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+              {isEditing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Eye className="h-4 w-4" />
+                <Send className="h-3.5 w-3.5" />
               )}
             </Button>
-          )}
-          <Button
-            size="icon"
-            onClick={handleSubmit}
-            disabled={busy || !input.trim()}
-            title="Send (Enter)"
-            className="h-9 w-9 shrink-0 bg-blue-600 text-white hover:bg-blue-700"
-          >
-            {isEditing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </Button>
+          </div>
         </div>
-        <p className="mt-1.5 text-right text-[10px] text-muted-foreground">
-          Enter to send &middot; Shift+Enter for newline
+
+        {/* Suggestion chips — only on empty conversations */}
+        {messages.length === 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {SUGGESTION_CHIPS.map((chip) => (
+              <Button
+                key={chip.label}
+                variant="outline"
+                size="sm"
+                onClick={() => setInput(chip.template)}
+                className="h-6 rounded-full px-2.5 text-[11px] font-normal"
+              >
+                {chip.label}
+              </Button>
+            ))}
+          </div>
+        )}
+
+        <p className="mt-1.5 text-right text-[10px] text-muted-foreground/40 select-none">
+          Enter send · Shift+Enter newline
         </p>
       </div>
     </div>
   );
 }
 
-function EmptyState({ onSelect }: { onSelect: (s: string) => void }) {
+/* ================================================================
+   Sub-components
+   ================================================================ */
+
+function EmptyState() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 py-8 text-center">
-      <Sparkles className="h-10 w-10 text-muted-foreground/30" />
-      <div>
-        <p className="mb-4 text-sm text-muted-foreground">
-          Describe how you'd like to edit this page
-        </p>
-        <div className="space-y-2">
-          {SUGGESTIONS.map((s) => (
-            <button
-              key={s}
-              onClick={() => onSelect(s)}
-              className={cn(
-                "block w-full text-left text-xs px-3 py-2 rounded-md",
-                "bg-secondary text-secondary-foreground",
-                "hover:bg-accent hover:text-accent-foreground",
-                "transition-colors",
-              )}
-            >
-              "{s}"
-            </button>
-          ))}
+    <div className="flex flex-col items-center justify-center py-16 select-none">
+      <div className="mb-3 rounded-xl bg-muted p-4">
+        <Pencil className="h-6 w-6 text-muted-foreground/40" />
+      </div>
+      <p className="text-[13px] font-medium">Start editing this page</p>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Type an instruction below to make changes
+      </p>
+    </div>
+  );
+}
+
+function UserBubble({ message }: { message: ChatMessage }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[85%]">
+        <div className="rounded-lg rounded-br-sm bg-primary px-3 py-2 text-[13px] text-primary-foreground whitespace-pre-wrap">
+          {message.content}
         </div>
+        <p className="mt-0.5 text-right text-[10px] text-muted-foreground/40">
+          {formatTime(message.timestamp)}
+        </p>
       </div>
     </div>
   );
@@ -194,210 +256,68 @@ function EmptyState({ onSelect }: { onSelect: (s: string) => void }) {
 
 function ProgressBubble({ message }: { message: ChatMessage }) {
   const { stage, op_index, total_ops } = message;
-  const isFastPhase = stage === "programmatic";
-  const isSlowPhase = stage === "generating";
+  const isFast = stage === "programmatic";
+  const isSlow = stage === "generating";
 
-  const hasOpInfo = op_index !== undefined && total_ops !== undefined && total_ops > 0;
+  const hasOpInfo =
+    op_index !== undefined && total_ops !== undefined && total_ops > 0;
 
   return (
     <div className="flex justify-center">
       <div
         className={cn(
-          "flex items-center gap-2 text-xs px-3 py-1.5 rounded-full transition-colors",
-          isFastPhase
-            ? "text-green-400 bg-green-500/10"
-            : isSlowPhase
-              ? "text-blue-400 bg-blue-500/10"
-              : "text-muted-foreground bg-muted",
+          "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] transition-all",
+          isFast
+            ? "bg-emerald-500/10 text-emerald-500"
+            : isSlow
+              ? "bg-blue-500/10 text-blue-400"
+              : "bg-muted text-muted-foreground",
         )}
       >
         <Loader2 className="h-3 w-3 animate-spin" />
-        <span>
-          {hasOpInfo && (
-            <span className="font-medium font-mono">
-              {(op_index ?? 0) + 1}/{total_ops}:{" "}
-            </span>
-          )}
-          {message.content}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PlanPreviewCard({
-  message,
-  onExecute,
-}: {
-  message: ChatMessage;
-  onExecute?: (prompt: string) => void;
-}) {
-  const plan = message.plan!;
-
-  const TYPE_LABELS: Record<string, { icon: string; label: string }> = {
-    text_replace: { icon: "P", label: "Text Replace" },
-    style_change: { icon: "P", label: "Style Change" },
-    visual_regenerate: { icon: "V", label: "Visual Edit" },
-  };
-
-  return (
-    <div className="flex justify-start">
-      <div className="max-w-[95%] rounded-2xl rounded-bl-md bg-muted px-3 py-2 text-sm">
-        <div className="mb-2 flex items-center gap-1.5">
-          <Eye className="h-3.5 w-3.5 shrink-0 text-blue-500" />
-          <span className="font-medium">Plan Preview</span>
-        </div>
-
-        <div className="overflow-hidden rounded-lg border bg-card text-xs">
-          <div className="border-b px-3 py-2 font-medium text-card-foreground">
-            {plan.summary}
-          </div>
-
-          {plan.all_programmatic && (
-            <div className="border-b bg-green-500/10 px-3 py-1.5 text-[11px] font-medium text-green-500">
-              Fast path — all operations are programmatic
-            </div>
-          )}
-
-          <div className="divide-y divide-border px-3 py-1">
-            {plan.operations.map((op, idx) => {
-              const config = TYPE_LABELS[op.type] ?? TYPE_LABELS.visual_regenerate;
-              return (
-                <div key={idx} className="py-1.5">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "h-4 w-4 rounded-full text-[9px] font-bold text-white flex items-center justify-center",
-                        op.type === "visual_regenerate" ? "bg-blue-500" : "bg-green-500",
-                      )}
-                    >
-                      {config.icon}
-                    </span>
-                    <span className="font-medium">
-                      #{idx + 1} {config.label}
-                    </span>
-                    <span
-                      className={cn(
-                        "ml-auto font-mono text-[10px] font-medium tabular-nums",
-                        op.confidence >= 0.8
-                          ? "text-green-500"
-                          : op.confidence >= 0.5
-                            ? "text-yellow-500"
-                            : "text-red-500",
-                      )}
-                    >
-                      {Math.round(op.confidence * 100)}%
-                    </span>
-                  </div>
-                  {op.type === "text_replace" && op.original_text && (
-                    <div className="ml-6 mt-0.5 space-y-0.5 text-[10px] text-muted-foreground">
-                      <div>
-                        <span className="rounded bg-red-500/10 px-1 font-mono text-red-400">
-                          {op.original_text}
-                        </span>
-                        {" → "}
-                        <span className="rounded bg-green-500/10 px-1 font-mono text-green-400">
-                          {op.replacement_text}
-                        </span>
-                      </div>
-                      {(op.context_before || op.context_after) && (
-                        <div className="text-muted-foreground/60">
-                          context: {op.context_before && <span>…{op.context_before}</span>}
-                          <span className="font-medium">[target]</span>
-                          {op.context_after && <span>{op.context_after}…</span>}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div className="ml-6 mt-0.5 text-[10px] text-muted-foreground/60">
-                    {op.reasoning}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="space-y-1 border-t px-3 py-2 text-[11px] text-muted-foreground">
-            <div>Order: {plan.execution_order.map((i) => `#${i + 1}`).join(" → ")}</div>
-            {plan.page_analysis && (
-              <div className="italic text-muted-foreground/60">{plan.page_analysis}</div>
-            )}
-          </div>
-        </div>
-
-        {onExecute && message.previewPrompt && (
-          <Button
-            size="sm"
-            onClick={() => onExecute(message.previewPrompt!)}
-            className="mt-2 w-full gap-1.5 bg-blue-600 text-white hover:bg-blue-700"
-          >
-            <Play className="h-3 w-3" />
-            Execute this plan
-          </Button>
+        {hasOpInfo && (
+          <span className="font-mono font-medium tabular-nums">
+            {(op_index ?? 0) + 1}/{total_ops}
+          </span>
         )}
+        <span className="truncate max-w-[180px]">{message.content}</span>
       </div>
     </div>
   );
 }
 
-function MessageBubble({
-  message,
-  onExecutePlan,
-}: {
-  message: ChatMessage;
-  onExecutePlan?: (prompt: string) => void;
-}) {
-  if (message.role === "user") {
+function ErrorOrTextBubble({ message }: { message: ChatMessage }) {
+  const isError = message.content.startsWith("Error:");
+
+  if (isError) {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-blue-600 px-3 py-2 text-sm text-white whitespace-pre-wrap">
-          {message.content}
-        </div>
+      <div className="flex justify-start">
+        <Card className="max-w-[95%] border-destructive/30 bg-destructive/5 px-3 py-2">
+          <div className="flex items-start gap-1.5 text-[13px] text-red-400">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{message.content.replace(/^Error:\s*/, "")}</span>
+          </div>
+        </Card>
       </div>
     );
   }
 
-  if (message.role === "progress") {
-    return <ProgressBubble message={message} />;
-  }
-
-  if (message.isPlanPreview && message.plan) {
-    return <PlanPreviewCard message={message} onExecute={onExecutePlan} />;
-  }
-
-  const isError = message.content.startsWith("Error:");
-  const result = message.result;
-
   return (
     <div className="flex justify-start">
-      <div
-        className={cn(
-          "max-w-[95%] rounded-2xl rounded-bl-md px-3 py-2 text-sm",
-          isError ? "bg-destructive/10 text-red-400" : "bg-muted text-foreground",
-        )}
-      >
-        <div className="flex items-center gap-1.5">
-          {isError ? (
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-          ) : (
-            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
-          )}
-          <span>{message.content}</span>
-        </div>
-
-        {result && (
-          <>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Version {result.version}
-            </div>
-            <OperationBreakdown result={result} />
-          </>
-        )}
-
-        {message.plan && !message.isPlanPreview && (
-          <ExecutionPlanPreview plan={message.plan} />
-        )}
+      <div className="max-w-[95%] text-[13px] text-muted-foreground">
+        {message.content}
       </div>
     </div>
   );
+}
+
+/* ---- Helpers ---- */
+
+function formatTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
 }

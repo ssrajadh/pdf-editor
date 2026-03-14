@@ -41,17 +41,15 @@ function App() {
 
   const hasEdits = Object.values(pageVersions).some((v) => v > 0);
 
-  // Keyboard shortcuts: arrow keys to navigate pages
+  // Keyboard shortcuts
   useEffect(() => {
     if (!session) return;
-
     const handler = (e: KeyboardEvent) => {
       if (
         e.target instanceof HTMLTextAreaElement ||
         e.target instanceof HTMLInputElement
       )
         return;
-
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         selectPage(Math.max(1, currentPage - 1));
@@ -60,7 +58,6 @@ function App() {
         selectPage(Math.min(session.page_count, currentPage + 1));
       }
     };
-
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [session, currentPage, selectPage]);
@@ -109,20 +106,16 @@ function App() {
 
   // ---- Editor screen ----
   const imageUrl = getImageUrl(currentPage);
-  const originalImageUrl = getPageImageUrl(
-    session.session_id,
-    currentPage,
-    0,
-  );
+  const originalImageUrl = getPageImageUrl(session.session_id, currentPage, 0);
 
   return (
     <TooltipProvider>
-      <div className="flex h-screen flex-col">
+      <div className="flex h-screen flex-col bg-canvas">
         {/* Reconnecting banner */}
         {isReconnecting && (
-          <div className="flex items-center justify-center gap-2 bg-amber-500 px-4 py-1.5 text-xs text-white animate-slide-down shrink-0">
-            <WifiOff className="h-3.5 w-3.5" />
-            Connection lost. Reconnecting...
+          <div className="flex items-center justify-center gap-2 bg-amber-600 px-4 py-1 text-[11px] font-medium text-white animate-slide-down shrink-0">
+            <WifiOff className="h-3 w-3" />
+            Reconnecting...
           </div>
         )}
 
@@ -138,10 +131,10 @@ function App() {
           }}
         />
 
-        {/* Three-panel grid */}
+        {/* Three-panel layout */}
         <div className="grid flex-1 min-h-0 grid-cols-[60px_1fr_320px]">
-          {/* Left: Thumbnails */}
-          <div className="border-r bg-muted/30 overflow-y-auto">
+          {/* Thumbnails */}
+          <div className="border-r bg-panel overflow-hidden">
             <PageThumbnails
               session={session}
               currentPage={currentPage}
@@ -151,7 +144,7 @@ function App() {
             />
           </div>
 
-          {/* Center: PDF Viewer */}
+          {/* Viewer */}
           <div className="min-w-0 overflow-hidden">
             <PdfViewer
               session={session}
@@ -165,8 +158,8 @@ function App() {
             />
           </div>
 
-          {/* Right: Chat Panel */}
-          <div className="border-l bg-muted/20 overflow-hidden">
+          {/* Chat */}
+          <div className="border-l bg-panel overflow-hidden">
             <ChatPanel
               messages={currentMessages}
               currentPage={currentPage}

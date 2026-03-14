@@ -6,6 +6,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/components/ThemeProvider";
 import type { Session } from "@/types";
 
@@ -30,58 +31,63 @@ export default function Header({
   const isDark = theme === "dark";
 
   return (
-    <header className="flex h-12 items-center border-b bg-background px-4 shrink-0">
-      {/* Left: App name */}
-      <div className="flex items-center gap-2">
-        <FileText className="h-4 w-4 text-blue-500" />
-        <span className="text-sm font-semibold tracking-tight">
-          Nano PDF Studio
+    <header className="flex h-11 items-center border-b bg-panel px-3 shrink-0 select-none">
+      {/* Left: branding */}
+      <div className="flex items-center gap-1.5">
+        <div className="flex h-6 w-6 items-center justify-center rounded bg-blue-600">
+          <FileText className="h-3.5 w-3.5 text-white" />
+        </div>
+        <span className="text-[13px] font-semibold tracking-tight">
+          Nano PDF
         </span>
       </div>
 
-      <Separator orientation="vertical" className="mx-3 h-5" />
+      <Separator orientation="vertical" className="mx-2.5 h-4" />
 
-      {/* Center: filename + page indicator */}
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <span className="font-medium text-foreground truncate max-w-[200px]">
+      {/* Center: file context */}
+      <div className="flex items-center gap-2 text-[13px] text-muted-foreground min-w-0">
+        <span className="truncate max-w-[240px] font-medium text-foreground">
           {session.filename}
         </span>
-        <span>
-          — Page {currentPage} of {session.page_count}
-        </span>
+        <Badge variant="secondary" className="rounded px-1.5 py-0 text-[11px] font-mono h-5 shrink-0">
+          {currentPage}/{session.page_count}
+        </Badge>
       </div>
 
-      {/* Right: actions */}
-      <div className="ml-auto flex items-center gap-1">
+      {/* Right: toolbar */}
+      <div className="ml-auto flex items-center">
         {hasEdits && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onExport}
-                disabled={exporting}
-                className="gap-1.5"
-              >
-                {exporting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Download className="h-3.5 w-3.5" />
-                )}
-                {exporting ? "Exporting..." : "Download PDF"}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Download edited PDF</TooltipContent>
-          </Tooltip>
+          <>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onExport}
+                  disabled={exporting}
+                  className="h-7 gap-1.5 px-2.5 text-[12px]"
+                >
+                  {exporting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
+                  Export
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Download edited PDF</TooltipContent>
+            </Tooltip>
+            <Separator orientation="vertical" className="mx-1 h-4" />
+          </>
         )}
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" onClick={onUploadNew}>
-              <Upload className="h-4 w-4" />
+            <Button variant="ghost" size="icon" onClick={onUploadNew} className="h-7 w-7">
+              <Upload className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Upload new PDF</TooltipContent>
+          <TooltipContent side="bottom">Upload new file</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -90,16 +96,17 @@ export default function Header({
               variant="ghost"
               size="icon"
               onClick={() => setTheme(isDark ? "light" : "dark")}
+              className="h-7 w-7"
             >
               {isDark ? (
-                <Sun className="h-4 w-4" />
+                <Sun className="h-3.5 w-3.5" />
               ) : (
-                <Moon className="h-4 w-4" />
+                <Moon className="h-3.5 w-3.5" />
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>
-            {isDark ? "Switch to light mode" : "Switch to dark mode"}
+          <TooltipContent side="bottom">
+            {isDark ? "Light mode" : "Dark mode"}
           </TooltipContent>
         </Tooltip>
       </div>

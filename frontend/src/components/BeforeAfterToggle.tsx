@@ -9,9 +9,9 @@ interface Props {
 
 function editLabel(editType?: PageEditType): string {
   if (!editType) return "Edited";
-  if (editType.hasProgram && editType.hasVisual) return "Edited (mixed)";
-  if (editType.hasProgram) return "Edited (programmatic)";
-  if (editType.hasVisual) return "Edited (AI)";
+  if (editType.hasProgram && editType.hasVisual) return "Mixed";
+  if (editType.hasProgram) return "Programmatic";
+  if (editType.hasVisual) return "AI";
   return "Edited";
 }
 
@@ -19,22 +19,22 @@ export default function BeforeAfterToggle({ showOriginal, onToggle, editType }: 
   const label = editLabel(editType);
 
   return (
-    <div className="inline-flex rounded-lg bg-secondary p-0.5 text-sm">
+    <div className="inline-flex h-6 rounded bg-muted p-0.5 text-[11px] font-medium">
       <button
         onClick={() => onToggle(true)}
         className={cn(
-          "px-3 py-1 rounded-md transition-colors font-medium",
+          "rounded px-2 transition-all",
           showOriginal
             ? "bg-background text-foreground shadow-sm"
             : "text-muted-foreground hover:text-foreground",
         )}
       >
-        Original
+        Before
       </button>
       <button
         onClick={() => onToggle(false)}
         className={cn(
-          "px-3 py-1 rounded-md transition-colors font-medium",
+          "rounded px-2 transition-all",
           !showOriginal
             ? "bg-background text-foreground shadow-sm"
             : "text-muted-foreground hover:text-foreground",
