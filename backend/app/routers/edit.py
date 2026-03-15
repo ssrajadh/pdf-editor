@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
-from app.config import settings
 from app.models.schemas import (
     EditResult,
     EditVersion,
@@ -17,26 +16,15 @@ from app.models.schemas import (
     RevertRequest,
 )
 from app.services.edit_engine import EditEngine
-from app.services.model_provider import ProviderFactory
-from app.services.state_manager import StateManager
-from app.storage.session import SessionManager
+from app.deps import session_mgr, state_mgr, model_provider
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-session_mgr = SessionManager(settings.storage_path)
-
-_provider = ProviderFactory.get_provider(
-    settings.model_provider,
-    settings.gemini_api_key,
-)
-
-state_mgr = StateManager(session_mgr)
-
 edit_engine = EditEngine(
     session_manager=session_mgr,
-    model_provider=_provider,
+    model_provider=model_provider,
     state_manager=state_mgr,
 )
 

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import pdf, edit
-from app.storage.session import SessionManager
+from app.deps import session_mgr
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,11 +53,10 @@ async def health():
 
 async def _cleanup_loop():
     """Delete sessions older than 24 hours, runs every hour."""
-    mgr = SessionManager(settings.storage_path)
     while True:
         await asyncio.sleep(3600)
         try:
-            deleted = mgr.cleanup_old_sessions(max_age_hours=24)
+            deleted = session_mgr.cleanup_old_sessions(max_age_hours=24)
             if deleted:
                 logger.info("Cleaned up %d expired sessions", deleted)
         except Exception:

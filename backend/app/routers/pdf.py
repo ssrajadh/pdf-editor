@@ -5,8 +5,8 @@ from typing import Optional, Literal
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
 
-from app.config import settings
 from datetime import datetime, timezone
+from app.config import settings
 from app.models.schemas import (
     TextBlock,
     UploadResponse,
@@ -18,14 +18,11 @@ from app.models.schemas import (
     SessionStatePage,
 )
 from app.services import pdf_service
-from app.services.state_manager import StateManager
-from app.storage.session import SessionManager
+from app.deps import session_mgr, state_mgr
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-session_mgr = SessionManager(settings.storage_path)
-state_mgr = StateManager(session_mgr)
 
 
 def _touch_session_page(session_id: str, page_num: int) -> None:
