@@ -24,7 +24,8 @@ from app.storage.session import SessionManager
 logger = logging.getLogger(__name__)
 
 OVERFLOW_RATIO = 1.15
-RECT_EXPAND_PX = 1.5
+VERT_EXPAND_PX = 1.5   # vertical expansion — safe, no adjacent text above/below a line
+HORIZ_EXPAND_PX = 0.3  # horizontal expansion — minimal to avoid eating adjacent chars/spaces
 FONT_SIZE_CLAMP = 0.15
 
 
@@ -37,9 +38,12 @@ def _match_font(original_font_name: str, flags: int) -> str:
     """
     name = original_font_name.lower()
 
-    # Detect bold/italic from flags
-    is_bold = bool(flags & (1 << 4))
-    is_italic = bool(flags & (1 << 1))
+    # Detect bold/italic from flags — check both PyMuPDF simplified span
+    # flags (bit 4 = bold, bit 1 = italic) AND raw PDF font descriptor
+    # flags (bit 17 = bold, bit 5 = italic) for maximum compatibility
+    # across different PDF generators and PyMuPDF versions.
+    is_bold = bool(flags & (1 << 4)) or bool(flags & (1 << 17))
+    is_italic = bool(flags & (1 << 1)) or bool(flags & (1 << 5))
 
     # Also detect from font name — many PDFs only encode weight here
     bold_indicators = ("bold", "black", "heavy", "semibold", "demibold", "demi")
@@ -144,10 +148,16 @@ def _expand_rect_safe(
     rect: fitz.Rect, page: fitz.Page, target_text: str,
 ) -> fitz.Rect:
     """Expand a redaction rect by a small margin to avoid clipping artifacts,
-    but don't overlap with adjacent text bounding boxes."""
+    but don't overlap with adjacent text bounding boxes.
+
+    Uses asymmetric expansion: generous vertical padding (glyph ascenders/
+    descenders), minimal horizontal padding (to avoid eating into adjacent
+    characters or spaces — the root cause of lost-space bugs like
+    'GPA: 5.0' becoming 'GPA:5.0').
+    """
     expanded = fitz.Rect(
-        rect.x0 - RECT_EXPAND_PX, rect.y0 - RECT_EXPAND_PX,
-        rect.x1 + RECT_EXPAND_PX, rect.y1 + RECT_EXPAND_PX,
+        rect.x0 - HORIZ_EXPAND_PX, rect.y0 - VERT_EXPAND_PX,
+        rect.x1 + HORIZ_EXPAND_PX, rect.y1 + VERT_EXPAND_PX,
     )
     expanded &= page.rect
 
@@ -168,6 +178,57 @@ def _expand_rect_safe(
     return expanded
 
 
+def _try_reuse_embedded_font(
+    doc: fitz.Document,
+    page: fitz.Page,
+    original_font_name: str,
+    replacement_text: str,
+) -> tuple[str, bytes] | None:
+    """Try to reuse the document's embedded font for replacement text.
+
+    Returns (fontname, fontbuffer) if the font can be extracted and contains
+    glyphs for the replacement text.  Returns None to fall back to base-14.
+    """
+    try:
+        fonts = page.get_fonts()
+        for font_entry in fonts:
+            xref = font_entry[0]
+            name = font_entry[3] if len(font_entry) > 3 else ""
+            if not (name == original_font_name
+                    or original_font_name in name
+                    or name in original_font_name):
+                continue
+
+            basename, ext, subtype, content = doc.extract_font(xref)
+            if not content or len(content) < 100:
+                continue  # empty or stub font
+
+            # Quick glyph check: try to create a Font object and measure
+            try:
+                test_font = fitz.Font(fontbuffer=content)
+                # Check that all characters in replacement_text have glyphs
+                has_all = all(test_font.has_glyph(ord(ch)) for ch in replacement_text)
+                if not has_all:
+                    logger.debug(
+                        "Embedded font %s missing glyphs for %r, skipping reuse",
+                        name, replacement_text,
+                    )
+                    continue
+            except Exception:
+                continue  # font buffer not usable
+
+            logger.info(
+                "Reusing embedded font: %s (xref=%d, type=%s, %d bytes)",
+                name, xref, subtype, len(content),
+            )
+            return name, content
+
+    except Exception as e:
+        logger.debug("Could not reuse embedded font %s: %s", original_font_name, e)
+
+    return None
+
+
 @dataclass
 class _PreparedReplacement:
     """Pre-validated replacement ready for batch application."""
@@ -181,6 +242,7 @@ class _PreparedReplacement:
     bg_color: tuple[float, float, float]
     origin: tuple[float, float]
     original_text: str
+    fontbuffer: bytes | None = None  # embedded font data, if reusing
 
 
 class PdfEditor:
@@ -267,11 +329,34 @@ class PdfEditor:
 
             for rect in rects:
                 props = self._get_text_properties(page, rect, original_text)
-                matched_font = _match_font(
-                    props["font"] if props else "Helvetica",
-                    props["flags"] if props else 0,
+
+                # Diagnostic logging
+                logger.info(
+                    "[DIAG] Replacing %r -> %r | rect=%s (%.1f x %.1f)",
+                    original_text, case_matched_text, rect,
+                    rect.width, rect.height,
                 )
+                if props:
+                    logger.info(
+                        "[DIAG]   props: font=%r size=%.1f flags=%d "
+                        "color=%s origin=%s",
+                        props["font"], props["size"], props["flags"],
+                        props["color"], props.get("origin"),
+                    )
+
+                orig_font_name = props["font"] if props else "Helvetica"
+                orig_flags = props["flags"] if props else 0
                 font_size = props["size"] if props else 11.0
+
+                # Try to reuse the document's embedded font first
+                fontbuffer = None
+                reused = _try_reuse_embedded_font(
+                    doc, page, orig_font_name, case_matched_text,
+                )
+                if reused:
+                    matched_font, fontbuffer = reused
+                else:
+                    matched_font = _match_font(orig_font_name, orig_flags)
 
                 # Overflow check
                 replacement_width = fitz.get_text_length(
@@ -310,17 +395,26 @@ class PdfEditor:
 
                 color_rgb = _color_int_to_rgb(props["color"]) if props else (0, 0, 0)
 
+                # Baseline alignment: use span origin (= exact baseline position)
+                # Fallback estimates baseline at 80% down from the top of the rect
+                # (ascenders reach ~80% of line height, descenders below).
                 if props and props.get("origin"):
                     text_point = fitz.Point(props["origin"][0], props["origin"][1])
                 else:
-                    text_point = fitz.Point(rect.x0, rect.y1 - rect.height * 0.15)
+                    text_point = fitz.Point(rect.x0, rect.y0 + rect.height * 0.80)
+
+                insert_kwargs: dict = dict(
+                    fontname=matched_font,
+                    fontsize=calibrated_size,
+                    color=color_rgb,
+                )
+                if fontbuffer:
+                    insert_kwargs["fontbuffer"] = fontbuffer
 
                 rc = page.insert_text(
                     text_point,
                     case_matched_text,
-                    fontname=matched_font,
-                    fontsize=calibrated_size,
-                    color=color_rgb,
+                    **insert_kwargs,
                 )
                 if rc < 0:
                     elapsed = int((time.monotonic() - t0) * 1000)
@@ -332,9 +426,11 @@ class PdfEditor:
                     )
 
                 logger.info(
-                    "Redact-and-overlay: %r -> %r (case: %r) at rect=%s, font=%s/%.1f(cal:%.1f), bg=%s",
+                    "Redact-and-overlay: %r -> %r (case: %r) at rect=%s, "
+                    "font=%s/%.1f(cal:%.1f), bg=%s, reused=%s",
                     original_text, replacement_text, case_matched_text, rect,
                     matched_font, font_size, calibrated_size, bg_color,
+                    fontbuffer is not None,
                 )
 
             doc.save(str(working_path), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
@@ -426,11 +522,27 @@ class PdfEditor:
 
                 rect = target_rect if not isinstance(target_rect, list) else target_rect[0]
                 props = self._get_text_properties(page, rect, op.original_text)
-                matched_font = _match_font(
-                    props["font"] if props else "Helvetica",
-                    props["flags"] if props else 0,
+
+                logger.info(
+                    "[DIAG] Batch[%d] %r -> %r | rect=%s (%.1f x %.1f) | props=%s",
+                    i, op.original_text, op.replacement_text, rect,
+                    rect.width, rect.height,
+                    {k: v for k, v in props.items() if k != "origin"} if props else None,
                 )
+
+                orig_font_name = props["font"] if props else "Helvetica"
+                orig_flags = props["flags"] if props else 0
                 font_size = props["size"] if props else 11.0
+
+                # Try embedded font reuse, then fall back to base-14
+                fontbuffer = None
+                reused = _try_reuse_embedded_font(
+                    doc, page, orig_font_name, op.replacement_text,
+                )
+                if reused:
+                    matched_font, fontbuffer = reused
+                else:
+                    matched_font = _match_font(orig_font_name, orig_flags)
 
                 # Match the case pattern of the original text
                 case_matched = _match_case(op.original_text, op.replacement_text)
@@ -458,10 +570,11 @@ class PdfEditor:
                 expanded = _expand_rect_safe(page=page, rect=rect, target_text=op.original_text)
                 color_rgb = _color_int_to_rgb(props["color"]) if props else (0, 0, 0)
 
+                # Baseline: use span origin if available, otherwise estimate
                 if props and props.get("origin"):
                     origin = (props["origin"][0], props["origin"][1])
                 else:
-                    origin = (rect.x0, rect.y1 - rect.height * 0.15)
+                    origin = (rect.x0, rect.y0 + rect.height * 0.80)
 
                 prepared.append(_PreparedReplacement(
                     op_index=i,
@@ -474,6 +587,7 @@ class PdfEditor:
                     bg_color=bg_color,
                     origin=origin,
                     original_text=op.original_text,
+                    fontbuffer=fontbuffer,
                 ))
 
             if not prepared:
@@ -492,12 +606,17 @@ class PdfEditor:
             any_insert_failed = False
             for prep in prepared:
                 text_point = fitz.Point(prep.origin[0], prep.origin[1])
-                rc = page.insert_text(
-                    text_point,
-                    prep.replacement_text,
+                insert_kwargs: dict = dict(
                     fontname=prep.fontname,
                     fontsize=prep.fontsize,
                     color=prep.color,
+                )
+                if prep.fontbuffer:
+                    insert_kwargs["fontbuffer"] = prep.fontbuffer
+                rc = page.insert_text(
+                    text_point,
+                    prep.replacement_text,
+                    **insert_kwargs,
                 )
 
                 op = operations[prep.op_index]
@@ -612,16 +731,16 @@ class PdfEditor:
             new_flags = original_flags
             if "bold" in changes:
                 if changes["bold"]:
-                    new_flags |= (1 << 4)
+                    new_flags |= (1 << 4) | (1 << 17)
                 else:
-                    new_flags &= ~(1 << 4)
+                    new_flags &= ~((1 << 4) | (1 << 17))
                 applied["bold"] = changes["bold"]
 
             if "italic" in changes:
                 if changes["italic"]:
-                    new_flags |= (1 << 1)
+                    new_flags |= (1 << 1) | (1 << 5)
                 else:
-                    new_flags &= ~(1 << 1)
+                    new_flags &= ~((1 << 1) | (1 << 5))
                 applied["italic"] = changes["italic"]
 
             new_font = _match_font(original_font, new_flags)
@@ -651,7 +770,7 @@ class PdfEditor:
             page.apply_redactions()
 
             text_point = fitz.Point(origin[0], origin[1]) if origin else \
-                fitz.Point(rect.x0, rect.y1 - rect.height * 0.15)
+                fitz.Point(rect.x0, rect.y0 + rect.height * 0.80)
 
             page.insert_text(
                 text_point, target_text,
