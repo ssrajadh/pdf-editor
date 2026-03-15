@@ -36,6 +36,84 @@ logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str, str, dict | None], Awaitable[None]]
 
+
+# ---------------------------------------------------------------------------
+# In-memory visual description cache — survives across edits, invalidated
+# only when a visual_regenerate operation changes the page appearance.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CachedDescription:
+    description: str
+    generated_at_step: int
+
+
+class VisualDescriptionCache:
+    """Cache visual descriptions. Only invalidate when the page undergoes
+    a visual_regenerate operation, not on programmatic edits."""
+
+    def __init__(self) -> None:
+        self._cache: dict[tuple[str, int], CachedDescription] = {}
+        # key: (session_id, page_num)
+
+    def get(self, session_id: str, page_num: int) -> str | None:
+        key = (session_id, page_num)
+        entry = self._cache.get(key)
+        return entry.description if entry else None
+
+    def set(self, session_id: str, page_num: int, description: str, step: int) -> None:
+        self._cache[(session_id, page_num)] = CachedDescription(
+            description=description, generated_at_step=step,
+        )
+
+    def invalidate(self, session_id: str, page_num: int) -> None:
+        """Call this ONLY after a visual_regenerate operation completes."""
+        self._cache.pop((session_id, page_num), None)
+
+
+# ---------------------------------------------------------------------------
+# Pre-planner heuristic: skip visual description for text-only instructions
+# ---------------------------------------------------------------------------
+
+_VISUAL_KEYWORDS = {
+    "chart", "graph", "image", "photo", "logo", "icon", "picture",
+    "background", "gradient", "border", "shadow", "watermark",
+    "diagram", "illustration", "drawing", "figure", "table",
+    "layout", "rearrange", "redesign", "move section", "swap",
+    "add a", "insert a", "place a", "put a",
+}
+
+_TEXT_PATTERNS = [
+    re.compile(r"change .+ to .+"),
+    re.compile(r"replace .+ with .+"),
+    re.compile(r"update .+ to .+"),
+    re.compile(r"fix .+ to .+"),
+    re.compile(r"make .+ bold"),
+    re.compile(r"make .+ italic"),
+    re.compile(r"change .+ color"),
+]
+
+
+def instruction_needs_visual_context(instruction: str) -> bool:
+    """Fast heuristic (<1 ms): does this instruction reference visual elements?
+
+    Returns True if visual context is needed, False if text-only context suffices.
+    """
+    instruction_lower = instruction.lower()
+
+    for keyword in _VISUAL_KEYWORDS:
+        if keyword in instruction_lower:
+            return True
+
+    # If it clearly looks like a text replacement, skip visual context
+    for pattern in _TEXT_PATTERNS:
+        if pattern.search(instruction_lower):
+            return False
+
+    # Ambiguous — fetch visual context to be safe
+    return True
+
+
 VISUAL_DESCRIPTION_PROMPT = """\
 Describe the non-text visual elements on this PDF page. Focus on:
 - Charts and graphs (type, approximate position, what data they show)
@@ -219,7 +297,24 @@ async def describe_visual_elements(
     text_content: str,
     provider: ModelProvider,
 ) -> str:
-    """Send the page image to a vision model to describe non-text visual elements."""
+    """Send the page image to a vision model to describe non-text visual elements.
+
+    Downscales the image to 800px on the long side to reduce input tokens
+    (~75% reduction). Full resolution is only needed for edit_image calls.
+    """
+    # Downscale for description — 800px on the long side is plenty
+    max_dim = 800
+    if max(image.size) > max_dim:
+        ratio = max_dim / max(image.size)
+        new_size = (int(image.width * ratio), int(image.height * ratio))
+        image_for_description = image.resize(new_size, Image.LANCZOS)
+        logger.info(
+            "Downscaled image for description: %dx%d → %dx%d",
+            image.width, image.height, *new_size,
+        )
+    else:
+        image_for_description = image
+
     prompt = VISUAL_DESCRIPTION_PROMPT
     if text_content:
         prompt += (
@@ -228,7 +323,7 @@ async def describe_visual_elements(
             f'"""\n{text_content[:2000]}\n"""'
         )
 
-    description = await provider.analyze_image(image, prompt)
+    description = await provider.analyze_image(image_for_description, prompt)
     logger.info(
         "Visual description for page (%d chars): %s",
         len(description),
@@ -242,8 +337,18 @@ async def build_page_context(
     page_num: int,
     provider: ModelProvider,
     session_mgr: SessionManager,
+    *,
+    skip_visual: bool = False,
+    visual_cache: VisualDescriptionCache | None = None,
 ) -> PageContext:
-    """Assemble all context the planner needs for a page."""
+    """Assemble all context the planner needs for a page.
+
+    Args:
+        skip_visual: When True, skip the analyze_image call entirely.
+            Used for instructions that clearly target text-only content.
+        visual_cache: In-memory cache that persists across programmatic
+            edits and is only invalidated on visual_regenerate operations.
+    """
     session_path = session_mgr.get_session_path(session_id)
     pdf_path = session_path / "original.pdf"
     metadata = session_mgr.get_metadata(session_id)
@@ -260,17 +365,31 @@ async def build_page_context(
     )
     image_path = pdf_service.get_page_image_path(session_path, page_num)
 
-    cache_path = (
-        session_path / "edits" / f"page_{page_num}_v{current_version}_vis_desc.txt"
-    )
-    if cache_path.exists():
-        visual_description = cache_path.read_text()
-        logger.info("Using cached visual description for page %d v%d", page_num, current_version)
+    if skip_visual:
+        visual_description = "Visual description skipped — text-only edit instruction."
+        logger.info("Skipped visual description for page %d (text-only instruction)", page_num)
     else:
-        image = Image.open(image_path)
-        visual_description = await describe_visual_elements(image, full_text, provider)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(visual_description)
+        # Check in-memory cache first (survives across programmatic edits)
+        cached_desc = visual_cache.get(session_id, page_num) if visual_cache else None
+        if cached_desc:
+            visual_description = cached_desc
+            logger.info("Using in-memory cached visual description for page %d", page_num)
+        else:
+            # Fall back to file-based cache
+            cache_path = (
+                session_path / "edits" / f"page_{page_num}_v{current_version}_vis_desc.txt"
+            )
+            if cache_path.exists():
+                visual_description = cache_path.read_text()
+                logger.info("Using file-cached visual description for page %d v%d", page_num, current_version)
+            else:
+                image = Image.open(image_path)
+                visual_description = await describe_visual_elements(image, full_text, provider)
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(visual_description)
+            # Populate in-memory cache
+            if visual_cache:
+                visual_cache.set(session_id, page_num, visual_description, current_version)
 
     # Layout analysis (cached per page version — only changes on working PDF edits)
     layout_cache_path = (
@@ -466,6 +585,7 @@ class Orchestrator:
         self.provider = model_provider
         self.sessions = session_manager
         self.state_manager = state_manager or StateManager(session_manager)
+        self.visual_cache = VisualDescriptionCache()
 
     # ------------------------------------------------------------------
     # Planning
@@ -481,8 +601,16 @@ class Orchestrator:
         """Build page context, call the planning LLM, parse into ExecutionPlan."""
         await on_progress("planning", "Analyzing edit instruction...", None)
 
+        needs_visual = instruction_needs_visual_context(instruction)
+        logger.info(
+            "Instruction visual heuristic: needs_visual=%s for %r",
+            needs_visual, instruction[:80],
+        )
+
         ctx = await build_page_context(
             session_id, page_num, self.provider, self.sessions,
+            skip_visual=not needs_visual,
+            visual_cache=self.visual_cache,
         )
 
         # Get conversation history for this page
@@ -1313,6 +1441,11 @@ class Orchestrator:
             metadata = self.sessions.get_metadata(session_id)
             metadata["current_page_versions"][str(page_num)] = version
             self.sessions.update_metadata(session_id, metadata)
+
+            # Invalidate in-memory visual description cache — the page
+            # appearance has changed, so the next edit needs a fresh description.
+            self.visual_cache.invalidate(session_id, page_num)
+            logger.info("Invalidated visual description cache for %s page %d", session_id, page_num)
 
             detail_prefix = ""
             if override_applied:

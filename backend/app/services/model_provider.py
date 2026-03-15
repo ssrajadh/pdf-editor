@@ -58,9 +58,16 @@ class GeminiProvider(ModelProvider):
     MAX_RETRIES = 3
     INITIAL_BACKOFF = 2.0
 
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash-image", timeout: int = 60):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-2.5-flash-image",
+        describe_model: str = "gemini-2.5-flash",
+        timeout: int = 60,
+    ):
         self._api_key = api_key
         self._model = model
+        self._describe_model = describe_model
         self._timeout = timeout
 
     @property
@@ -167,8 +174,12 @@ class GeminiProvider(ModelProvider):
         ) from last_exc
 
     async def analyze_image(self, image: Image.Image, prompt: str) -> str:
-        """Vision-language call: send image + prompt, get text back."""
-        url = f"{self.API_BASE}/{self._model}:generateContent"
+        """Vision-language call: send image + prompt, get text back.
+
+        Uses the cheaper describe_model (vision-language) instead of the
+        expensive image generation model.
+        """
+        url = f"{self.API_BASE}/{self._describe_model}:generateContent"
         params = {"key": self._api_key}
 
         image_b64 = _pil_to_base64(image)
@@ -341,6 +352,7 @@ class ProviderFactory:
             return GeminiProvider(
                 api_key=api_key,
                 model=kwargs.get("model", settings.gemini_model),
+                describe_model=kwargs.get("describe_model", settings.describe_model),
                 timeout=kwargs.get("timeout", settings.model_timeout_seconds),
             )
 

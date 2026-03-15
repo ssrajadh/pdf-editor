@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash-image"
+    describe_model: str = "gemini-2.5-flash"
     model_provider: str = "gemini"
     model_timeout_seconds: int = 60
     planning_model: str = "gemini-2.5-flash"
