@@ -1571,6 +1571,9 @@ class Orchestrator:
             conversation_messages=current_conversation,
         )
 
+        stack = self.state_manager.get_stack(session_id, page_num)
+        result.step = stack.current_step
+
         try:
             metadata = self.sessions.get_metadata(session_id)
             if any(op.success for op in result.operations):

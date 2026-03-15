@@ -84,6 +84,7 @@ export interface ExecutionResult {
   session_id: string;
   page_num: number;
   version: number;
+  step?: number;
   plan_summary: string;
   operations: OperationResult[];
   total_time_ms: number;

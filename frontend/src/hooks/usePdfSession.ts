@@ -122,7 +122,7 @@ export function usePdfSession() {
       setEditingPage(null);
       lastPromptRef.current = null;
 
-      setPageVersions((prev) => ({ ...prev, [page]: result.version }));
+      setPageVersions((prev) => ({ ...prev, [page]: result.step ?? result.version }));
 
       setPageEditTypes((prev) => {
         const existing = prev[page] ?? { hasProgram: false, hasVisual: false };
@@ -467,9 +467,9 @@ export function usePdfSession() {
     (pageNum: number, version?: number) => {
       if (!session) return "";
       const v = version ?? pageVersions[pageNum];
-      return getPageImageUrl(session.session_id, pageNum, v);
+      return getPageImageUrl(session.session_id, pageNum, v, editCount);
     },
-    [session, pageVersions],
+    [session, pageVersions, editCount],
   );
 
   // Auto-fetch history when page changes and has edits

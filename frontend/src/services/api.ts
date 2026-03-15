@@ -31,9 +31,13 @@ export function getPageImageUrl(
   sessionId: string,
   pageNum: number,
   step?: number,
+  cacheBust?: number,
 ): string {
   const base = `${API_BASE}/pdf/${sessionId}/page/${pageNum}/image`;
-  const query = step !== undefined ? `?step=${step}&t=${Date.now()}` : "";
+  const params = new URLSearchParams();
+  if (step !== undefined) params.set("step", String(step));
+  if (cacheBust !== undefined) params.set("r", String(cacheBust));
+  const query = params.toString() ? `?${params.toString()}` : "";
   return `${base}${query}`;
 }
 

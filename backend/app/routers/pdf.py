@@ -233,22 +233,18 @@ async def get_page_image(
             if stack.snapshots:
                 if step is not None:
                     snap = stack.get(step)
-                    if snap is None:
-                        raise HTTPException(
-                            status_code=404,
-                            detail=f"Step {step} not found for page {page_num}",
-                        )
                 else:
                     snap = stack.current
 
-                from pathlib import Path as _P
-                img = _P(snap.image_filename)
-                if img.exists():
-                    return FileResponse(
-                        img,
-                        media_type="image/png",
-                        headers={"Cache-Control": "public, max-age=3600"},
-                    )
+                if snap is not None:
+                    from pathlib import Path as _P
+                    img = _P(snap.image_filename)
+                    if img.exists():
+                        return FileResponse(
+                            img,
+                            media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=3600"},
+                        )
         except (IndexError, KeyError):
             pass  # fall through to version-based lookup
 

@@ -266,6 +266,7 @@ class ExecutionResult(BaseModel):
     session_id: str
     page_num: int
     version: int
+    step: int | None = None
     plan_summary: str
     operations: list[OperationResult]
     total_time_ms: int
