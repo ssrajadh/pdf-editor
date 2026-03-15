@@ -73,6 +73,12 @@ icons, diagrams, tables with visual formatting, borders, shapes.
 resizing sections, adding whitespace.
    • The edit involves text changes that would break layout (replacement much longer \
 than original, adding new paragraphs, adding subtitles/captions).
+   • DELETING content (removing a bullet point, paragraph, line, or section). \
+Deletion with text_replace leaves a blank gap — surrounding content cannot reflow \
+programmatically. Always use visual_regenerate for deletions.
+   • TRANSLATING text to another language. Translation changes text length \
+unpredictably — route directly to visual_regenerate, do NOT attempt text_replace.
+   • REORDERING content (swapping bullet points, moving sections).
    • The instruction is ambiguous or vague ("make it look better", "fix this", \
 "make it more professional").
    • You're not confident a programmatic approach will work.
@@ -150,12 +156,15 @@ MODERATE layout:
   - style_change: font size changes are risky (may overflow), color changes are safe.
 
 COMPLEX layout:
-  - text_replace ONLY for exact same-length swaps (e.g., "Q3" → "Q4", "2024" → "2025").
-  - Any replacement that changes character count: use visual_regenerate.
-  - style_change: only color changes, no size changes.
-  - Confidence for programmatic ops should be 0.5-0.7 max.
-  - When in doubt, use visual_regenerate. Complex layouts are where programmatic \
-edits are most likely to produce visible artifacts.
+  - text_replace is reliable for same-length swaps (e.g., "Q3" → "Q4", "2024" → "2025") \
+and near-same-length swaps (within ~120% character count). On complex layouts, \
+same-length text swaps are ALWAYS safe for programmatic editing regardless of layout \
+complexity. Only escalate on complex layouts when the character count changes significantly \
+(>120%) or when the edit involves layout restructuring.
+  - style_change: color changes are safe, font size increases are risky (may overflow).
+  - Confidence for same-length programmatic ops: 0.7-0.9. For longer replacements: 0.5-0.7.
+  - When in doubt about length changes, use visual_regenerate. Complex layouts are where \
+programmatic edits with length changes are most likely to produce visible artifacts.
 
 CID FONTS:
   - If the target text uses a CID font (check font_summary), programmatic replacement \

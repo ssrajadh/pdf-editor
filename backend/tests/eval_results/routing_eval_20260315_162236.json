@@ -1,0 +1,362 @@
+{
+  "timestamp": "20260315_162236",
+  "total": 29,
+  "passed": 19,
+  "failed": 10,
+  "pct": 65.5,
+  "elapsed_s": 185.7,
+  "details": [
+    {
+      "i": 0,
+      "passed": false,
+      "instruction": "Change 2024 to 2025",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty"
+    },
+    {
+      "i": 1,
+      "passed": false,
+      "instruction": "Change Q3 to Q4",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty"
+    },
+    {
+      "i": 2,
+      "passed": false,
+      "instruction": "Fix the typo: change 'managment' to 'management'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty"
+    },
+    {
+      "i": 3,
+      "passed": false,
+      "instruction": "Replace 'John Smith' with 'Jane Smith'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty"
+    },
+    {
+      "i": 4,
+      "passed": true,
+      "instruction": "Change the phone number from 555-1234 to 555-5678",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 5,
+      "passed": true,
+      "instruction": "Update the email to john.doe@newcompany.com",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 6,
+      "passed": true,
+      "instruction": "Change 'Python' to 'Golang' in the skills section",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 7,
+      "passed": false,
+      "instruction": "Replace all instances of 2024 with 2025",
+      "doc_type": "report",
+      "expected": "programmatic",
+      "actual": "empty"
+    },
+    {
+      "i": 8,
+      "passed": true,
+      "instruction": "Change 'January' to 'February'",
+      "doc_type": "invoice",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 9,
+      "passed": true,
+      "instruction": "Change the title from 'Q3 Report' to 'Q4 Report'",
+      "doc_type": "report",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 10,
+      "passed": true,
+      "instruction": "Add a company logo in the top right corner",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 11,
+      "passed": true,
+      "instruction": "Change the pie chart to a bar chart",
+      "doc_type": "presentation",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 12,
+      "passed": true,
+      "instruction": "Make the background gradient blue to purple",
+      "doc_type": "presentation",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 13,
+      "passed": true,
+      "instruction": "Add a decorative border around the page",
+      "doc_type": "report",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 14,
+      "passed": true,
+      "instruction": "Replace the header image with a mountain landscape",
+      "doc_type": "report",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 15,
+      "passed": true,
+      "instruction": "Change the title to 'Q4 Report' and add a blue accent line under it",
+      "doc_type": "report",
+      "expected": "hybrid",
+      "actual": "hybrid"
+    },
+    {
+      "i": 16,
+      "passed": false,
+      "instruction": "Update the year to 2025 and change the chart colors",
+      "doc_type": "presentation",
+      "expected": "hybrid",
+      "actual": "visual"
+    },
+    {
+      "i": 17,
+      "passed": true,
+      "instruction": "Make the title bold",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 18,
+      "passed": true,
+      "instruction": "Change the font color of the header to blue",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 19,
+      "passed": true,
+      "instruction": "Increase the font size of the name to 16pt",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 20,
+      "passed": true,
+      "instruction": "Add 'Intern' after 'Software Engineer'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 21,
+      "passed": true,
+      "instruction": "Change 'Software Engineer' to 'Software Engineer Intern'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 22,
+      "passed": false,
+      "instruction": "Change 'Revenue' to 'Net Revenue from Continuing Operations'",
+      "doc_type": "report",
+      "expected": "visual",
+      "actual": "hybrid"
+    },
+    {
+      "i": 23,
+      "passed": true,
+      "instruction": "Move the skills section above work experience",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 24,
+      "passed": true,
+      "instruction": "Change the date format from MM/DD/YYYY to DD-MM-YYYY",
+      "doc_type": "invoice",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 25,
+      "passed": false,
+      "instruction": "Delete the second bullet point",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "programmatic"
+    },
+    {
+      "i": 26,
+      "passed": false,
+      "instruction": "Translate the title to Spanish",
+      "doc_type": "report",
+      "expected": "visual",
+      "actual": "hybrid"
+    },
+    {
+      "i": 27,
+      "passed": false,
+      "instruction": "Capitalize the section headers",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty"
+    },
+    {
+      "i": 28,
+      "passed": true,
+      "instruction": "Swap the order of the first two bullet points",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "visual"
+    }
+  ],
+  "errors": [
+    {
+      "instruction": "Change 2024 to 2025",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty",
+      "description": "Same-length year swap",
+      "plan_summary": "The target text '2024' was not found anywhere on the page, so the requested edit cannot be performed.",
+      "operations": []
+    },
+    {
+      "instruction": "Change Q3 to Q4",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty",
+      "description": "Same-length quarter swap",
+      "plan_summary": "The text 'Q3' was not found on the page, so the requested change from 'Q3' to 'Q4' cannot be performed. On text-heavy pages (density 0.72), programmatic text replacement is preferred, but it requires the original text to be present. Visual regeneration for text changes is avoided on text-heavy pages due to hallucination risk.",
+      "operations": []
+    },
+    {
+      "instruction": "Fix the typo: change 'managment' to 'management'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty",
+      "description": "Typo fix, nearly same length",
+      "plan_summary": "The text 'managment' was not found on the page, so no typo could be fixed. Please ensure the target text is present and spelled correctly in the provided page content.",
+      "operations": []
+    },
+    {
+      "instruction": "Replace 'John Smith' with 'Jane Smith'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty",
+      "description": "Name swap, same length",
+      "plan_summary": "The text 'John Smith' was not found on the page, so the requested replacement cannot be performed. On this text-heavy page (density 0.72), a visual regeneration for text changes is avoided to prevent text corruption.",
+      "operations": []
+    },
+    {
+      "instruction": "Replace all instances of 2024 with 2025",
+      "doc_type": "report",
+      "expected": "programmatic",
+      "actual": "empty",
+      "description": "Multi-occurrence same-length swap",
+      "plan_summary": "The text '2024' was not found on the page, so no replacements could be made.",
+      "operations": []
+    },
+    {
+      "instruction": "Update the year to 2025 and change the chart colors",
+      "doc_type": "presentation",
+      "expected": "hybrid",
+      "actual": "visual",
+      "description": "Text swap + visual change",
+      "plan_summary": "Change the colors of the pie chart. The year in the document is already '2025', so no text replacement operation is needed for that part of the instruction.",
+      "operations": [
+        [
+          "visual_regenerate",
+          0.8
+        ]
+      ]
+    },
+    {
+      "instruction": "Change 'Revenue' to 'Net Revenue from Continuing Operations'",
+      "doc_type": "report",
+      "expected": "visual",
+      "actual": "hybrid",
+      "description": "Way too long for programmatic \u2014 must escalate",
+      "plan_summary": "Attempt to replace 'revenue' with 'Net Revenue from Continuing Operations' programmatically, but include a visual fallback due to the significant length increase and high risk of text overflow.",
+      "operations": [
+        [
+          "text_replace",
+          0.3
+        ],
+        [
+          "visual_regenerate",
+          0.8
+        ]
+      ]
+    },
+    {
+      "instruction": "Delete the second bullet point",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "programmatic",
+      "description": "Deletion with reflow requires visual",
+      "plan_summary": "Delete the second bullet point '- Built LangGraph-based AI agent system' programmatically, prioritizing text integrity on a text-heavy page.",
+      "operations": [
+        [
+          "text_replace",
+          0.6
+        ]
+      ]
+    },
+    {
+      "instruction": "Translate the title to Spanish",
+      "doc_type": "report",
+      "expected": "visual",
+      "actual": "hybrid",
+      "description": "Translation changes length unpredictably",
+      "plan_summary": "Translate the title 'Q3 Financial Report' to 'Informe Financiero del Q3'. Programmatic attempt with visual fallback due to potential text overflow.",
+      "operations": [
+        [
+          "text_replace",
+          0.4
+        ],
+        [
+          "visual_regenerate",
+          0.85
+        ]
+      ]
+    },
+    {
+      "instruction": "Capitalize the section headers",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "empty",
+      "description": "Text transform, same length",
+      "plan_summary": "The identified section headers ('EDUCATION', 'WORK EXPERIENCE', 'SKILLS') are already fully capitalized in the document. No changes are needed.",
+      "operations": []
+    }
+  ]
+}

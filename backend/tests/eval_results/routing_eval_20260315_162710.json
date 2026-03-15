@@ -1,0 +1,262 @@
+{
+  "timestamp": "20260315_162710",
+  "total": 29,
+  "passed": 28,
+  "failed": 1,
+  "pct": 96.6,
+  "elapsed_s": 127.9,
+  "details": [
+    {
+      "i": 0,
+      "passed": true,
+      "instruction": "Change 2024 to 2025",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 1,
+      "passed": true,
+      "instruction": "Change Q3 to Q4",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 2,
+      "passed": true,
+      "instruction": "Fix the typo: change 'managment' to 'management'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 3,
+      "passed": true,
+      "instruction": "Replace 'John Smith' with 'Jane Smith'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 4,
+      "passed": true,
+      "instruction": "Change the phone number from 555-1234 to 555-5678",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 5,
+      "passed": true,
+      "instruction": "Update the email to john.smith@newcompany.com",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 6,
+      "passed": true,
+      "instruction": "Change 'Python' to 'Golang' in the skills section",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 7,
+      "passed": true,
+      "instruction": "Replace all instances of 2024 with 2025",
+      "doc_type": "report",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 8,
+      "passed": true,
+      "instruction": "Change 'January' to 'February'",
+      "doc_type": "invoice",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 9,
+      "passed": true,
+      "instruction": "Change the title from 'Q3 Report' to 'Q4 Report'",
+      "doc_type": "report",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 10,
+      "passed": true,
+      "instruction": "Add a company logo in the top right corner",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 11,
+      "passed": true,
+      "instruction": "Change the pie chart to a bar chart",
+      "doc_type": "presentation",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 12,
+      "passed": true,
+      "instruction": "Make the background gradient blue to purple",
+      "doc_type": "presentation",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 13,
+      "passed": true,
+      "instruction": "Add a decorative border around the page",
+      "doc_type": "report",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 14,
+      "passed": true,
+      "instruction": "Replace the header image with a mountain landscape",
+      "doc_type": "report",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 15,
+      "passed": true,
+      "instruction": "Change the title to 'Q4 Report' and add a blue accent line under it",
+      "doc_type": "report",
+      "expected": "hybrid",
+      "actual": "hybrid"
+    },
+    {
+      "i": 16,
+      "passed": true,
+      "instruction": "Update the year to 2025 and change the chart colors",
+      "doc_type": "presentation",
+      "expected": "hybrid",
+      "actual": "hybrid"
+    },
+    {
+      "i": 17,
+      "passed": true,
+      "instruction": "Make the title bold",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 18,
+      "passed": true,
+      "instruction": "Change the font color of the header to blue",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 19,
+      "passed": true,
+      "instruction": "Increase the font size of the name to 16pt",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 20,
+      "passed": true,
+      "instruction": "Add 'Intern' after 'Software Engineer'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 21,
+      "passed": true,
+      "instruction": "Change 'Software Engineer' to 'Software Engineer Intern'",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 22,
+      "passed": true,
+      "instruction": "Change 'Revenue' to 'Net Revenue from Continuing Operations'",
+      "doc_type": "report",
+      "expected": "hybrid",
+      "actual": "hybrid"
+    },
+    {
+      "i": 23,
+      "passed": true,
+      "instruction": "Move the skills section above work experience",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 24,
+      "passed": true,
+      "instruction": "Change the date format from MM/DD/YYYY to DD-MM-YYYY",
+      "doc_type": "invoice",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 25,
+      "passed": true,
+      "instruction": "Delete the second bullet point",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 26,
+      "passed": true,
+      "instruction": "Translate the title to Spanish",
+      "doc_type": "report",
+      "expected": "visual",
+      "actual": "visual"
+    },
+    {
+      "i": 27,
+      "passed": true,
+      "instruction": "Capitalize the section headers",
+      "doc_type": "resume",
+      "expected": "programmatic",
+      "actual": "programmatic"
+    },
+    {
+      "i": 28,
+      "passed": false,
+      "instruction": "Swap the order of the first two bullet points",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "programmatic"
+    }
+  ],
+  "errors": [
+    {
+      "instruction": "Swap the order of the first two bullet points",
+      "doc_type": "resume",
+      "expected": "visual",
+      "actual": "programmatic",
+      "description": "Reordering requires layout changes",
+      "plan_summary": "Swap the content of the first two bullet points under 'SOFTWARE ENGINEER, Acme Corp' to effectively reorder them. This programmatic approach is preferred due to the high text density of the page, which makes visual regeneration of text regions risky.",
+      "operations": [
+        [
+          "text_replace",
+          0.9
+        ],
+        [
+          "text_replace",
+          0.9
+        ]
+      ]
+    }
+  ]
+}
