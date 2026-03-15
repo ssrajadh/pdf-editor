@@ -29,10 +29,25 @@ FONT_SIZE_CLAMP = 0.15
 
 
 def _match_font(original_font_name: str, flags: int) -> str:
-    """Map an arbitrary PDF font name to the closest standard PyMuPDF font."""
+    """Map an arbitrary PDF font name to the closest standard PyMuPDF font.
+
+    Detects bold/italic from both the flags bitmask AND the font name itself,
+    since many PDFs encode weight in the font name (e.g. "Arial-Bold",
+    "TimesNewRoman,BoldItalic") rather than in the flags field.
+    """
     name = original_font_name.lower()
+
+    # Detect bold/italic from flags
     is_bold = bool(flags & (1 << 4))
     is_italic = bool(flags & (1 << 1))
+
+    # Also detect from font name — many PDFs only encode weight here
+    bold_indicators = ("bold", "black", "heavy", "semibold", "demibold", "demi")
+    italic_indicators = ("italic", "oblique", "slant", "incline")
+    if not is_bold and any(ind in name for ind in bold_indicators):
+        is_bold = True
+    if not is_italic and any(ind in name for ind in italic_indicators):
+        is_italic = True
 
     if any(s in name for s in ("courier", "mono", "consol", "fixed")):
         if is_bold and is_italic:
@@ -47,6 +62,44 @@ def _match_font(original_font_name: str, flags: int) -> str:
         if is_bold and is_italic:
             return "hebi"
         return "hebo" if is_bold else ("heit" if is_italic else "helv")
+
+
+def _match_case(original_text: str, replacement_text: str) -> str:
+    """Apply the case pattern of original_text to replacement_text.
+
+    Handles ALL CAPS, Title Case, lowercase, and first-letter-upper patterns.
+    Falls back to returning replacement_text unchanged if the pattern is mixed
+    or unrecognizable.
+    """
+    if not original_text or not replacement_text:
+        return replacement_text
+
+    # Strip to compare only alphabetic characters
+    alpha_orig = [c for c in original_text if c.isalpha()]
+    if not alpha_orig:
+        return replacement_text
+
+    # ALL CAPS: "HELLO WORLD" → "GOODBYE WORLD"
+    if all(c.isupper() for c in alpha_orig):
+        return replacement_text.upper()
+
+    # all lowercase: "hello world" → "goodbye world"
+    if all(c.islower() for c in alpha_orig):
+        return replacement_text.lower()
+
+    # Title Case: "Hello World" → "Goodbye World"
+    words_orig = original_text.split()
+    if len(words_orig) > 1 and all(
+        w[0].isupper() and w[1:].islower() for w in words_orig if len(w) > 1 and w[0].isalpha()
+    ):
+        return replacement_text.title()
+
+    # First letter uppercase only: "Hello" → "Goodbye"
+    if alpha_orig[0].isupper() and all(c.islower() for c in alpha_orig[1:]):
+        return replacement_text[0].upper() + replacement_text[1:].lower() if len(replacement_text) > 1 else replacement_text.upper()
+
+    # Mixed or unknown pattern — don't alter
+    return replacement_text
 
 
 def _color_int_to_rgb(color_int: int) -> tuple[float, float, float]:
@@ -209,6 +262,9 @@ class PdfEditor:
 
             rects = [target_rect] if not isinstance(target_rect, list) else target_rect
 
+            # Match the case pattern of the original text
+            case_matched_text = _match_case(original_text, replacement_text)
+
             for rect in rects:
                 props = self._get_text_properties(page, rect, original_text)
                 matched_font = _match_font(
@@ -219,7 +275,7 @@ class PdfEditor:
 
                 # Overflow check
                 replacement_width = fitz.get_text_length(
-                    replacement_text, fontname=matched_font, fontsize=font_size,
+                    case_matched_text, fontname=matched_font, fontsize=font_size,
                 )
                 original_width = rect.width
 
@@ -242,7 +298,7 @@ class PdfEditor:
 
                 # Font size calibration
                 calibrated_size = _calibrate_font_size(
-                    replacement_text, matched_font, original_width, font_size,
+                    case_matched_text, matched_font, original_width, font_size,
                 )
 
                 bg_color = self._detect_background_color(page, rect)
@@ -261,7 +317,7 @@ class PdfEditor:
 
                 rc = page.insert_text(
                     text_point,
-                    replacement_text,
+                    case_matched_text,
                     fontname=matched_font,
                     fontsize=calibrated_size,
                     color=color_rgb,
@@ -270,14 +326,14 @@ class PdfEditor:
                     elapsed = int((time.monotonic() - t0) * 1000)
                     return TextReplaceResult(
                         success=False, original_text=original_text,
-                        new_text=replacement_text, escalate=True,
+                        new_text=case_matched_text, escalate=True,
                         error_message="Text insertion failed — overflow",
                         time_ms=elapsed, characters_changed=0,
                     )
 
                 logger.info(
-                    "Redact-and-overlay: %r -> %r at rect=%s, font=%s/%.1f(cal:%.1f), bg=%s",
-                    original_text, replacement_text, rect,
+                    "Redact-and-overlay: %r -> %r (case: %r) at rect=%s, font=%s/%.1f(cal:%.1f), bg=%s",
+                    original_text, replacement_text, case_matched_text, rect,
                     matched_font, font_size, calibrated_size, bg_color,
                 )
 
@@ -292,7 +348,7 @@ class PdfEditor:
                 original_text=original_text,
                 new_text=replacement_text,
                 time_ms=elapsed,
-                characters_changed=abs(len(replacement_text) - len(original_text)),
+                characters_changed=sum(a != b for a, b in zip(original_text, case_matched_text)) + abs(len(case_matched_text) - len(original_text)),
             )
 
         except Exception as e:
@@ -376,14 +432,17 @@ class PdfEditor:
                 )
                 font_size = props["size"] if props else 11.0
 
+                # Match the case pattern of the original text
+                case_matched = _match_case(op.original_text, op.replacement_text)
+
                 replacement_width = fitz.get_text_length(
-                    op.replacement_text, fontname=matched_font, fontsize=font_size,
+                    case_matched, fontname=matched_font, fontsize=font_size,
                 )
                 if rect.width > 0 and replacement_width > rect.width * OVERFLOW_RATIO:
                     elapsed_op = int((time.monotonic() - t_op) * 1000)
                     results.append(TextReplaceResult(
                         success=False, original_text=op.original_text,
-                        new_text=op.replacement_text, escalate=True,
+                        new_text=case_matched, escalate=True,
                         error_message=(
                             f"Replacement text too wide: {replacement_width:.0f}px "
                             f"vs {rect.width:.0f}px available"
@@ -393,7 +452,7 @@ class PdfEditor:
                     continue
 
                 calibrated_size = _calibrate_font_size(
-                    op.replacement_text, matched_font, rect.width, font_size,
+                    case_matched, matched_font, rect.width, font_size,
                 )
                 bg_color = self._detect_background_color(page, rect)
                 expanded = _expand_rect_safe(page=page, rect=rect, target_text=op.original_text)
@@ -408,7 +467,7 @@ class PdfEditor:
                     op_index=i,
                     rect=rect,
                     expanded_rect=expanded,
-                    replacement_text=op.replacement_text,
+                    replacement_text=case_matched,
                     fontname=matched_font,
                     fontsize=calibrated_size,
                     color=color_rgb,
@@ -458,9 +517,7 @@ class PdfEditor:
                         original_text=prep.original_text,
                         new_text=prep.replacement_text,
                         time_ms=elapsed_op,
-                        characters_changed=abs(
-                            len(prep.replacement_text) - len(prep.original_text)
-                        ),
+                        characters_changed=sum(a != b for a, b in zip(prep.original_text, prep.replacement_text)) + abs(len(prep.replacement_text) - len(prep.original_text)),
                     ))
                     logger.info(
                         "Batch redact-and-overlay [%d]: %r -> %r at rect=%s, "

@@ -42,12 +42,26 @@ export function usePdfSession() {
   const currentPlanRef = useRef<ExecutionPlan | null>(null);
   const fetchHistoryRef = useRef<(page: number) => void>(() => {});
 
-  const appendMsg = useCallback((page: number, msg: ChatMessage) => {
-    setChatMessages((prev) => ({
-      ...prev,
-      [page]: [...(prev[page] ?? []), msg],
-    }));
+  // Persist chat messages to sessionStorage whenever they change
+  const persistChats = useCallback((chats: Record<number, ChatMessage[]>) => {
+    try {
+      const sid = sessionStorage.getItem("nano_pdf_session_id");
+      if (sid) {
+        sessionStorage.setItem(`nano_pdf_chats_${sid}`, JSON.stringify(chats));
+      }
+    } catch { /* quota exceeded — ignore */ }
   }, []);
+
+  const appendMsg = useCallback((page: number, msg: ChatMessage) => {
+    setChatMessages((prev) => {
+      const next = {
+        ...prev,
+        [page]: [...(prev[page] ?? []), msg],
+      };
+      persistChats(next);
+      return next;
+    });
+  }, [persistChats]);
 
   const replaceProgressMsg = useCallback((page: number, msg: ChatMessage) => {
     setChatMessages((prev) => {
@@ -61,11 +75,15 @@ export function usePdfSession() {
   }, []);
 
   const removeProgressMsgs = useCallback((page: number) => {
-    setChatMessages((prev) => ({
-      ...prev,
-      [page]: (prev[page] ?? []).filter((m) => m.role !== "progress"),
-    }));
-  }, []);
+    setChatMessages((prev) => {
+      const next = {
+        ...prev,
+        [page]: (prev[page] ?? []).filter((m) => m.role !== "progress"),
+      };
+      persistChats(next);
+      return next;
+    });
+  }, [persistChats]);
 
   const [editingPage, setEditingPage] = useState<number | null>(null);
   const lastPromptRef = useRef<{ page: number; prompt: string; forceVisual?: boolean } | null>(null);
@@ -224,13 +242,32 @@ export function usePdfSession() {
       setPageVersions(nextVersions);
       setPageEditTypes(nextEditTypes);
 
+      // Restore conversations from backend, supplement with sessionStorage
       const nextChats: Record<number, ChatMessage[]> = {};
       Object.entries(state.conversations ?? {}).forEach(([key, msgs]) => {
         const pageNum = Number(key);
-        if (!Number.isNaN(pageNum)) {
+        if (!Number.isNaN(pageNum) && msgs.length > 0) {
           nextChats[pageNum] = msgs;
         }
       });
+
+      // Fallback: merge from sessionStorage if backend conversations are sparse
+      try {
+        const cached = sessionStorage.getItem(`nano_pdf_chats_${sessionId}`);
+        if (cached) {
+          const stored = JSON.parse(cached) as Record<number, ChatMessage[]>;
+          for (const [key, msgs] of Object.entries(stored)) {
+            const pageNum = Number(key);
+            if (!Number.isNaN(pageNum) && msgs.length > 0) {
+              // Use whichever source has more messages
+              if (!nextChats[pageNum] || nextChats[pageNum].length < msgs.length) {
+                nextChats[pageNum] = msgs;
+              }
+            }
+          }
+        }
+      } catch { /* parse error — ignore */ }
+
       setChatMessages(nextChats);
       setEditCount(totalEdits);
       setPageHistories({});

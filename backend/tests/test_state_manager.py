@@ -110,6 +110,7 @@ def _make_execution_result(
         total_time_ms=100,
         programmatic_count=1,
         visual_count=0,
+        blocked_count=0,
         text_layer_source="programmatic_edit",
     )
 

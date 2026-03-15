@@ -67,7 +67,7 @@ function Thumbnail({
         <button
           onClick={onSelect}
           className={cn(
-            "group relative mx-auto mb-2 block w-[72px] rounded-sm transition-colors overflow-hidden",
+            "group relative mx-auto mb-2 block w-[108px] rounded-sm transition-colors overflow-hidden",
             !isSelected && "hover:bg-muted",
           )}
         >

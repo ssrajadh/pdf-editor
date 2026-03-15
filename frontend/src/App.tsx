@@ -200,9 +200,9 @@ function App() {
         />
 
         {/* Three-panel layout */}
-        <div className="grid flex-1 min-h-0 grid-cols-[100px_minmax(0,1fr)_380px]">
+        <div className="grid flex-1 min-h-0 grid-cols-[140px_minmax(0,1fr)_380px]">
           {/* Thumbnails */}
-          <div className="border-r bg-panel overflow-hidden w-[100px] shrink-0">
+          <div className="border-r bg-panel overflow-hidden w-[140px] shrink-0">
             {session ? (
               <PageThumbnails
                 session={session}

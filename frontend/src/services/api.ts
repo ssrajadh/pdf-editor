@@ -30,11 +30,11 @@ export async function uploadPdf(file: File): Promise<Session> {
 export function getPageImageUrl(
   sessionId: string,
   pageNum: number,
-  version?: number,
+  step?: number,
 ): string {
   const base = `${API_BASE}/pdf/${sessionId}/page/${pageNum}/image`;
-  const cacheBust = version !== undefined ? `?v=${version}` : "";
-  return `${base}${cacheBust}`;
+  const query = step !== undefined ? `?step=${step}&t=${Date.now()}` : "";
+  return `${base}${query}`;
 }
 
 export async function getPageText(

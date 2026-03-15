@@ -1119,7 +1119,7 @@ class Orchestrator:
                     op_index=op_idx,
                     op_type=OperationType.TEXT_REPLACE,
                     success=True, time_ms=result.time_ms, path="programmatic",
-                    detail=f"Text replaced: {desc} ({result.characters_changed} chars changed)",
+                    detail=f"Text replaced: {desc}",
                 )
 
             if result.escalate:
@@ -1538,7 +1538,9 @@ class Orchestrator:
         # Get the image path and text layer for the snapshot
         session_path = self.sessions.get_session_path(session_id)
         image_path = str(
-            pdf_service.get_page_image_path(session_path, page_num)
+            pdf_service.get_page_image_path(
+                session_path, page_num, version=str(result.version)
+            )
         )
 
         text_layer = None

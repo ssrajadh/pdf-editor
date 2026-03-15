@@ -131,6 +131,7 @@ def _make_result(session_id, op_type="text_replace", detail="test"):
         total_time_ms=100,
         programmatic_count=1,
         visual_count=0,
+        blocked_count=0,
         text_layer_source="programmatic_edit",
     )
 
@@ -650,6 +651,7 @@ class TestConversationalRoutingLive:
                 total_time_ms=8200,
                 programmatic_count=0,
                 visual_count=1,
+                blocked_count=0,
                 text_layer_source="ocr",
             ),
             image_path="page_1_v1.png",
