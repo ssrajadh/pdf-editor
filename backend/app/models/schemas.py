@@ -160,6 +160,10 @@ class TextReplaceOp(BaseModel):
     match_strategy: Literal["exact", "contains", "first_occurrence"] = Field(
         description="How to locate the text on the page"
     )
+    reflow_line: bool = Field(
+        default=False,
+        description="If true, shift subsequent text on the same line rightward to accommodate a longer replacement",
+    )
     confidence: float = Field(ge=0, le=1, description="Planner's confidence this can be done programmatically (0-1)")
     reasoning: str = Field(description="Why this operation path was chosen")
 

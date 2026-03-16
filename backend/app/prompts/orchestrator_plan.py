@@ -41,11 +41,21 @@ context_before or context_after when original_text is not unique on the page.
      - "contains": match any text block containing the original_text.
      - "first_occurrence": use when the same text appears multiple times and \
 the user wants only the first one changed.
+   • reflow_line — (optional, default false) set to true when the replacement is \
+moderately longer (120%-200% of original character count) and subsequent text on the \
+same line should be shifted rightward to make room. The execution engine will attempt \
+to shift text on the same line; if there isn't enough room, it escalates to visual.
    • confidence — 0.9+ for straightforward same-length swaps. Lower if risky.
    • reasoning — brief explanation.
 
-   ESCALATION RULE: If replacement_text is more than ~120% of original_text's character \
-count, the text will likely overflow its bounding box and break layout. In this case, \
+   REFLOW RULE: If replacement_text is between ~120% and ~200% of original_text's character \
+count and the text appears on a line with available space to the right, set reflow_line \
+to true and confidence to 0.7-0.85. The execution engine will shift subsequent text on \
+the same line rightward to accommodate the longer replacement. If the shift fails (not \
+enough room), it will automatically escalate to visual_regenerate.
+
+   ESCALATION RULE: If replacement_text is more than ~200% of original_text's character \
+count, the text will likely overflow even with reflow. In this case, \
 set confidence below 0.5 and ALSO add a visual_regenerate operation as a fallback with \
 a prompt that describes the desired text change. The execution engine will use the \
 programmatic op if confidence >= 0.5, otherwise fall back to the visual op.
@@ -241,7 +251,7 @@ Plan:
       "replacement_text": "Net Revenue from Continuing Operations Report",
       "match_strategy": "first_occurrence",
       "confidence": 0.3,
-      "reasoning": "Replacement is 3x longer than original (14 chars -> 46 chars). High risk of overflowing the title bounding box."
+      "reasoning": "Replacement is 3x longer than original (14 chars -> 46 chars). Far exceeds 200% threshold — reflow cannot help. High risk of overflowing."
     },
     {
       "type": "visual_regenerate",
@@ -392,7 +402,7 @@ Plan:
   "all_programmatic": false
 }
 
-── Example 8: Borderline text change ──
+── Example 8: Moderately longer text with reflow ──
 User instruction: "Change 'Jan' to 'January'"
 Page text: "Report Period: Jan - Mar 2025\\nPrepared: Jan 15, 2025"
 Plan:
@@ -400,23 +410,29 @@ Plan:
   "operations": [
     {
       "type": "text_replace",
-      "original_text": "Report Period: Jan",
-      "replacement_text": "Report Period: January",
+      "original_text": "Jan",
+      "replacement_text": "January",
+      "context_before": "Report Period: ",
+      "context_after": " - Mar",
       "match_strategy": "exact",
-      "confidence": 0.7,
-      "reasoning": "Replacement is slightly longer (3 -> 7 chars). Including surrounding context 'Report Period: ' to uniquely match the first occurrence. Confidence lowered because 'January' is ~133% of 'Jan', borderline on the 120% overflow threshold, but the surrounding whitespace in the line likely provides enough room."
+      "reflow_line": true,
+      "confidence": 0.8,
+      "reasoning": "Replacement is ~133% of original length. Setting reflow_line=true to shift ' - Mar 2025' rightward. If insufficient space, engine will escalate."
     },
     {
       "type": "text_replace",
-      "original_text": "Prepared: Jan 15",
-      "replacement_text": "Prepared: January 15",
+      "original_text": "Jan",
+      "replacement_text": "January",
+      "context_before": "Prepared: ",
+      "context_after": " 15, 2025",
       "match_strategy": "exact",
-      "confidence": 0.7,
-      "reasoning": "Same expansion from 'Jan' to 'January'. Including surrounding context for unique match. Similar overflow risk as above."
+      "reflow_line": true,
+      "confidence": 0.8,
+      "reasoning": "Same expansion with reflow. Context disambiguates from the first occurrence."
     }
   ],
   "execution_order": [0, 1],
-  "summary": "Replace 'Jan' with 'January' in two locations. Slightly longer replacement but likely fits within existing layout.",
+  "summary": "Replace 'Jan' with 'January' in two locations using line reflow to shift subsequent text.",
   "all_programmatic": true
 }
 

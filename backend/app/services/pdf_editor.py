@@ -365,6 +365,19 @@ class PdfEditor:
                 original_width = rect.width
 
                 if original_width > 0 and replacement_width > original_width * OVERFLOW_RATIO:
+                    # Try reflow for moderate overflow (up to 2x width)
+                    if replacement_width <= original_width * 2.0:
+                        logger.info(
+                            "Overflow %.0f%%, attempting reflow",
+                            100 * replacement_width / original_width,
+                        )
+                        doc.close()
+                        return self.apply_text_replace_with_reflow(
+                            session_id, page_num,
+                            original_text, replacement_text,
+                            match_strategy, context_before, context_after,
+                        )
+
                     elapsed = int((time.monotonic() - t0) * 1000)
                     logger.info(
                         "Replacement too wide: %.0f vs %.0f available (%.0f%%)",
@@ -454,6 +467,256 @@ class PdfEditor:
                 success=False, original_text=original_text,
                 new_text=replacement_text, escalate=True,
                 error_message=f"PDF editing error: {e}",
+                time_ms=elapsed, characters_changed=0,
+            )
+        finally:
+            if not doc.is_closed:
+                doc.close()
+
+    # ------------------------------------------------------------------
+    # Text replacement with line-level reflow
+    # ------------------------------------------------------------------
+
+    def apply_text_replace_with_reflow(
+        self,
+        session_id: str,
+        page_num: int,
+        original_text: str,
+        replacement_text: str,
+        match_strategy: str = "exact",
+        context_before: str | None = None,
+        context_after: str | None = None,
+    ) -> TextReplaceResult:
+        """Replace text and shift subsequent text on the same line rightward.
+
+        Used when the replacement is moderately longer than the original
+        (105%-200% width) and there is enough room on the line to accommodate
+        the extra width by shifting subsequent spans.
+        """
+        t0 = time.monotonic()
+        working_path = self.sessions.get_working_pdf_path(session_id)
+
+        try:
+            doc = fitz.open(str(working_path))
+        except Exception as e:
+            elapsed = int((time.monotonic() - t0) * 1000)
+            return TextReplaceResult(
+                success=False, original_text=original_text,
+                new_text=replacement_text, escalate=True,
+                error_message=f"Failed to open PDF: {e}", time_ms=elapsed,
+                characters_changed=0,
+            )
+
+        try:
+            check = self._check_pdf_access(doc)
+            if check:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return TextReplaceResult(
+                    success=False, original_text=original_text,
+                    new_text=replacement_text, escalate=True,
+                    error_message=check, time_ms=elapsed, characters_changed=0,
+                )
+
+            if page_num < 1 or page_num > len(doc):
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return TextReplaceResult(
+                    success=False, original_text=original_text,
+                    new_text=replacement_text,
+                    error_message=f"Page {page_num} out of range (1-{len(doc)})",
+                    time_ms=elapsed, characters_changed=0,
+                )
+
+            page = doc[page_num - 1]
+
+            # Find target rect
+            target_rect = self._find_target_rect(
+                page, original_text, match_strategy,
+                context_before, context_after,
+            )
+            if isinstance(target_rect, str):
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return TextReplaceResult(
+                    success=False, original_text=original_text,
+                    new_text=replacement_text, escalate=True,
+                    error_message=target_rect, time_ms=elapsed,
+                    characters_changed=0,
+                )
+
+            rect = target_rect if not isinstance(target_rect, list) else target_rect[0]
+            case_matched_text = _match_case(original_text, replacement_text)
+            props = self._get_text_properties(page, rect, original_text)
+
+            orig_font_name = props["font"] if props else "Helvetica"
+            orig_flags = props["flags"] if props else 0
+            font_size = props["size"] if props else 11.0
+
+            # Try embedded font, then base-14
+            fontbuffer = None
+            reused = _try_reuse_embedded_font(doc, page, orig_font_name, case_matched_text)
+            if reused:
+                matched_font, fontbuffer = reused
+            else:
+                matched_font = _match_font(orig_font_name, orig_flags)
+
+            # Measure widths
+            new_width = fitz.get_text_length(
+                case_matched_text, fontname=matched_font, fontsize=font_size,
+            )
+            old_width = rect.width
+            delta = new_width - old_width
+
+            if delta <= 0:
+                # Replacement fits — no reflow needed, delegate to normal replace
+                doc.close()
+                return self.apply_text_replace(
+                    session_id, page_num, original_text, replacement_text,
+                    match_strategy, context_before, context_after,
+                )
+
+            # Collect content after the target on the same line
+            # This handles both the "tail" of a containing span and separate spans
+            line_fragments = self._get_line_content_after_target(
+                page, rect, original_text,
+            )
+
+            # Check available space: gap between rightmost content and page edge
+            page_right = page.rect.x1 - 10  # 10pt right margin
+            if line_fragments:
+                rightmost_x1 = max(f["bbox"][2] for f in line_fragments)
+            else:
+                rightmost_x1 = rect.x1
+
+            available_space = page_right - rightmost_x1
+            if available_space < delta:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info(
+                    "Reflow failed: need %.1fpx shift but only %.1fpx available",
+                    delta, available_space,
+                )
+                return TextReplaceResult(
+                    success=False, original_text=original_text,
+                    new_text=replacement_text, escalate=True,
+                    error_message=(
+                        f"Reflow failed: need {delta:.0f}px but only "
+                        f"{available_space:.0f}px available on line"
+                    ),
+                    time_ms=elapsed, characters_changed=0,
+                )
+
+            # Build the combined redaction area covering target + all subsequent content
+            redact_x0 = rect.x0
+            redact_y0 = rect.y0
+            redact_x1 = max(rightmost_x1, rect.x1)
+            redact_y1 = rect.y1
+            if line_fragments:
+                redact_y0 = min(redact_y0, min(f["bbox"][1] for f in line_fragments))
+                redact_y1 = max(redact_y1, max(f["bbox"][3] for f in line_fragments))
+
+            # Expand slightly for clean coverage
+            redact_rect = fitz.Rect(
+                redact_x0 - HORIZ_EXPAND_PX,
+                redact_y0 - VERT_EXPAND_PX,
+                redact_x1 + delta + HORIZ_EXPAND_PX,  # cover the shifted area too
+                redact_y1 + VERT_EXPAND_PX,
+            )
+            redact_rect &= page.rect
+
+            bg_color = self._detect_background_color(page, rect)
+            color_rgb = _color_int_to_rgb(props["color"]) if props else (0, 0, 0)
+
+            # Fragment data is already collected (from before redaction)
+
+            # Apply redaction
+            annot = page.add_redact_annot(redact_rect)
+            annot.set_colors(fill=bg_color)
+            page.apply_redactions()
+
+            # Re-insert replacement text at original position
+            if props and props.get("origin"):
+                text_point = fitz.Point(props["origin"][0], props["origin"][1])
+            else:
+                text_point = fitz.Point(rect.x0, rect.y0 + rect.height * 0.80)
+
+            insert_kwargs: dict = dict(
+                fontname=matched_font, fontsize=font_size, color=color_rgb,
+            )
+            if fontbuffer:
+                insert_kwargs["fontbuffer"] = fontbuffer
+
+            rc = page.insert_text(text_point, case_matched_text, **insert_kwargs)
+            if rc < 0:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return TextReplaceResult(
+                    success=False, original_text=original_text,
+                    new_text=case_matched_text, escalate=True,
+                    error_message="Text insertion failed — overflow",
+                    time_ms=elapsed, characters_changed=0,
+                )
+
+            # Re-insert line fragments shifted right by delta
+            for frag in line_fragments:
+                f_font_name = frag["font"]
+                f_flags = frag["flags"]
+                f_reused = _try_reuse_embedded_font(
+                    doc, page, f_font_name, frag["text"],
+                )
+                if f_reused:
+                    f_matched_font, f_fontbuffer = f_reused
+                else:
+                    f_matched_font = _match_font(f_font_name, f_flags)
+                    f_fontbuffer = None
+
+                f_color = _color_int_to_rgb(frag["color"])
+                if frag["origin"]:
+                    f_point = fitz.Point(
+                        frag["origin"][0] + delta,
+                        frag["origin"][1],
+                    )
+                else:
+                    f_bbox = frag["bbox"]
+                    f_point = fitz.Point(
+                        f_bbox[0] + delta,
+                        f_bbox[1] + (f_bbox[3] - f_bbox[1]) * 0.80,
+                    )
+
+                f_insert_kwargs: dict = dict(
+                    fontname=f_matched_font,
+                    fontsize=frag["size"],
+                    color=f_color,
+                )
+                if f_fontbuffer:
+                    f_insert_kwargs["fontbuffer"] = f_fontbuffer
+
+                page.insert_text(f_point, frag["text"], **f_insert_kwargs)
+
+            logger.info(
+                "Reflow: %r -> %r, delta=%.1fpx, shifted %d fragments",
+                original_text, case_matched_text, delta, len(line_fragments),
+            )
+
+            doc.save(str(working_path), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+            doc.close()
+
+            self._bump_version_and_render(session_id, page_num, working_path)
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            return TextReplaceResult(
+                success=True,
+                original_text=original_text,
+                new_text=replacement_text,
+                time_ms=elapsed,
+                characters_changed=sum(
+                    a != b for a, b in zip(original_text, case_matched_text)
+                ) + abs(len(case_matched_text) - len(original_text)),
+            )
+
+        except Exception as e:
+            logger.error("Reflow replacement failed: %s", e, exc_info=True)
+            elapsed = int((time.monotonic() - t0) * 1000)
+            return TextReplaceResult(
+                success=False, original_text=original_text,
+                new_text=replacement_text, escalate=True,
+                error_message=f"PDF reflow error: {e}",
                 time_ms=elapsed, characters_changed=0,
             )
         finally:
@@ -947,6 +1210,74 @@ class PdfEditor:
                             "origin": span["origin"],
                         }
         return None
+
+    @staticmethod
+    def _get_line_content_after_target(
+        page: fitz.Page, target_rect: fitz.Rect, target_text: str,
+    ) -> list[dict]:
+        """Return all text content on the same line that comes AFTER the target.
+
+        Handles both:
+        - The "tail" of a span that contains the target text (e.g. " Smith"
+          when the target is "John" in span "John Smith")
+        - Separate spans that start after the target rect
+
+        Returns a list of dicts with: text, font, size, color, flags, origin, bbox.
+        Sorted left-to-right by x position.
+        """
+        line_height = target_rect.height
+        tolerance = line_height * 0.5
+        mid_y = (target_rect.y0 + target_rect.y1) / 2
+
+        fragments: list[dict] = []
+        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+
+        for block in blocks:
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    s_bbox = span["bbox"]
+                    s_mid_y = (s_bbox[1] + s_bbox[3]) / 2
+                    if abs(s_mid_y - mid_y) > tolerance:
+                        continue
+
+                    span_text = span.get("text", "")
+                    if not span_text:
+                        continue
+
+                    # Case 1: This span contains the target text —
+                    # extract the tail (everything after the target)
+                    if target_text in span_text and s_bbox[0] < target_rect.x1:
+                        idx = span_text.find(target_text)
+                        tail = span_text[idx + len(target_text):]
+                        if tail:
+                            origin = span.get("origin")
+                            fragments.append({
+                                "text": tail,
+                                "font": span["font"],
+                                "size": span["size"],
+                                "color": span["color"],
+                                "flags": span["flags"],
+                                "origin": (target_rect.x1, origin[1]) if origin else None,
+                                "bbox": (target_rect.x1, s_bbox[1], s_bbox[2], s_bbox[3]),
+                            })
+                        continue
+
+                    # Case 2: Separate span starting after target
+                    if s_bbox[0] >= target_rect.x1 - 1:
+                        fragments.append({
+                            "text": span_text,
+                            "font": span["font"],
+                            "size": span["size"],
+                            "color": span["color"],
+                            "flags": span["flags"],
+                            "origin": span.get("origin"),
+                            "bbox": s_bbox,
+                        })
+
+        fragments.sort(key=lambda f: f["bbox"][0])
+        return fragments
 
     @staticmethod
     def _detect_background_color(

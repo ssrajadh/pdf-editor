@@ -1230,12 +1230,20 @@ class Orchestrator:
                     error="Low confidence — visual fallback expected",
                 )
 
-            result = await asyncio.to_thread(
-                editor.apply_text_replace,
-                session_id, page_num,
-                op.original_text, op.replacement_text, op.match_strategy,
-                op.context_before, op.context_after,
-            )
+            if getattr(op, "reflow_line", False):
+                result = await asyncio.to_thread(
+                    editor.apply_text_replace_with_reflow,
+                    session_id, page_num,
+                    op.original_text, op.replacement_text, op.match_strategy,
+                    op.context_before, op.context_after,
+                )
+            else:
+                result = await asyncio.to_thread(
+                    editor.apply_text_replace,
+                    session_id, page_num,
+                    op.original_text, op.replacement_text, op.match_strategy,
+                    op.context_before, op.context_after,
+                )
 
             if result.success:
                 await on_progress(
