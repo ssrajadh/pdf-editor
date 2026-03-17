@@ -36,3 +36,9 @@ backend/tests/eval_results/
 
 # Docker
 docker-compose.override.yml
+
+# NightShift
+.nightshift_ledger.txt
+.aider.tags.cache.v4/
+.aider.chat.history.md
+vibe_report.md
