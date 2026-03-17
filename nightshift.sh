@@ -9,9 +9,23 @@ PY_PROMPT_FILE="nightshift/prompts/strict_cleanup_python.txt"
 TS_PROMPT_FILE="nightshift/prompts/strict_cleanup_ts.txt"
 MODEL="ollama/qwen2.5-coder:7b"
 
-# --- Safety check: abort if working directory is not clean ---
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "ERROR: Working directory is not clean. Commit or stash changes before running NightShift."
+# --- Safety check: allow only ledger/report dirtiness ---
+DISALLOWED_CHANGES=0
+while IFS= read -r line; do
+  [[ -z "${line}" ]] && continue
+  path="${line:3}"
+  case "${path}" in
+    ".nightshift_ledger.txt"|"vibe_report.md")
+      ;;
+    *)
+      DISALLOWED_CHANGES=1
+      ;;
+  esac
+done < <(git status --porcelain)
+
+if [[ "${DISALLOWED_CHANGES}" -ne 0 ]]; then
+  echo "ERROR: Working directory has changes outside the NightShift ledger/report."
+  echo "Please commit or stash non-NightShift changes before running."
   git status --short
   exit 1
 fi
@@ -76,6 +90,12 @@ while IFS= read -r FILE; do
     "${IMAGE_NAME}" \
     bash -lc "
       set -euo pipefail
+      git config --global --add safe.directory /app
+
+      if [[ '${FILE}' == *.py ]]; then
+        pip install --no-cache-dir -r backend/requirements.txt
+      fi
+
       aider --model '${MODEL}' --map-tokens 0 --yes --message-file '${PROMPT_FILE}' '${FILE}'
 
       if [[ '${FILE}' == *.py ]]; then
