@@ -76,7 +76,7 @@ while IFS= read -r FILE; do
     "${IMAGE_NAME}" \
     bash -lc "
       set -euo pipefail
-      aider --model '${MODEL}' --no-repo-map --yes --message-file '${PROMPT_FILE}' '${FILE}'
+      aider --model '${MODEL}' --map-tokens 0 --yes --message-file '${PROMPT_FILE}' '${FILE}'
 
       if [[ '${FILE}' == *.py ]]; then
         PYTHONPATH=/app pytest backend/tests/
