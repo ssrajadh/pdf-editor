@@ -1,0 +1,2 @@
+ONLY add JSDoc comments to functions and strict TypeScript types/interfaces to arguments and returns. Do NOT alter business logic, React hooks, or styling.
+

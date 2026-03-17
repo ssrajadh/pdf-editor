@@ -31,5 +31,8 @@ Thumbs.db
 backend/data/
 *.pdf
 
+# Test artifacts
+backend/tests/eval_results/
+
 # Docker
 docker-compose.override.yml

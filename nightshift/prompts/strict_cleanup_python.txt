@@ -1,0 +1,2 @@
+ONLY add Google-style docstrings, strict Python type hints (Dict, List, Optional), and remove unused imports. Do NOT alter business logic or API calls.
+
