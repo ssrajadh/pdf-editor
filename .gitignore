@@ -42,3 +42,4 @@ docker-compose.override.yml
 .aider.tags.cache.v4/
 .aider.chat.history.md
 vibe_report.md
+.aider*
